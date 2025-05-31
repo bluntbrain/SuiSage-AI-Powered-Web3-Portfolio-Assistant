@@ -301,7 +301,14 @@ export default function ChatScreen() {
                 {/* Selection buttons for AI responses */}
                 {message.sender !== "user" &&
                   !message.isLoading &&
-                  message.sessionId && (
+                  message.sessionId &&
+                  // Only show selection buttons when there are multiple AI responses in this session
+                  messages.filter(
+                    (m) =>
+                      m.sessionId === message.sessionId &&
+                      m.sender !== "user" &&
+                      !m.isLoading
+                  ).length > 1 && (
                     <View style={styles.selectionContainer}>
                       <TouchableOpacity
                         style={[
