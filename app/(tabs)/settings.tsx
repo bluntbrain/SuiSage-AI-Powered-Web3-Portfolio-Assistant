@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   StyleSheet,
@@ -7,7 +7,6 @@ import {
   StatusBar,
   Alert,
   TouchableOpacity,
-  Modal,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,7 +36,7 @@ export default function SettingsScreen() {
     openaiWins: 0,
     geminiWins: 0,
   });
-  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [showVoiceDropdown, setShowVoiceDropdown] = useState(false);
 
   useEffect(() => {
     loadTrainingStats();
@@ -66,25 +65,16 @@ export default function SettingsScreen() {
 
   const handleVoiceSelection = (voice: string) => {
     updateSelectedVoice(voice);
-    setShowVoiceModal(false);
+    setShowVoiceDropdown(false);
   };
 
-  // Get all available voices - fallback to direct import if service fails
-  const getAllAvailableVoices = () => {
-    try {
-      const voices = voiceService.getAllVoices();
-      return voices.length > 0 ? voices : getFallbackVoices();
-    } catch (error) {
-      return getFallbackVoices();
-    }
-  };
-
-  const getFallbackVoices = () => {
+  // Memoize voice data to prevent re-computation on every render
+  const availableVoices = useMemo(() => {
     return Object.entries(AVAILABLE_VOICES).map(([category, voices]) => ({
       category,
       voices,
     }));
-  };
+  }, []);
 
   const exportTrainingData = async () => {
     try {
@@ -311,56 +301,139 @@ export default function SettingsScreen() {
           </View>
 
           {/* Voice Selection - Always show, but indicate when API not configured */}
-          <TouchableOpacity
-            style={[
-              styles.voiceSelector,
-              !voiceService.isApiConfigured() && styles.voiceSelectorDisabled,
-            ]}
-            onPress={() => setShowVoiceModal(true)}
-          >
-            <View style={styles.voiceSelectorContent}>
-              <View style={styles.voiceSelectorLeft}>
+          <View style={styles.voiceSelectorContainer}>
+            <TouchableOpacity
+              style={[
+                styles.voiceSelector,
+                !voiceService.isApiConfigured() && styles.voiceSelectorDisabled,
+                showVoiceDropdown && styles.voiceSelectorActive,
+              ]}
+              onPress={() => setShowVoiceDropdown(!showVoiceDropdown)}
+            >
+              <View style={styles.voiceSelectorContent}>
+                <View style={styles.voiceSelectorLeft}>
+                  <IconSymbol
+                    name="speaker.2.fill"
+                    size={20}
+                    color={
+                      voiceService.isApiConfigured()
+                        ? SuiColors.aqua
+                        : "rgba(192, 230, 255, 0.4)"
+                    }
+                  />
+                  <View style={styles.voiceSelectorText}>
+                    <ThemedText
+                      style={[
+                        styles.voiceSelectorTitle,
+                        !voiceService.isApiConfigured() && styles.disabledText,
+                      ]}
+                    >
+                      Voice Selection
+                    </ThemedText>
+                    <ThemedText
+                      style={[
+                        styles.voiceSelectorSubtitle,
+                        !voiceService.isApiConfigured() && styles.disabledText,
+                      ]}
+                    >
+                      {voiceService.isApiConfigured()
+                        ? `Current: ${voiceSettings.selectedVoice}`
+                        : "API key required to use voices"}
+                    </ThemedText>
+                  </View>
+                </View>
                 <IconSymbol
-                  name="speaker.2.fill"
-                  size={20}
+                  name={showVoiceDropdown ? "chevron.up" : "chevron.down"}
+                  size={16}
                   color={
                     voiceService.isApiConfigured()
-                      ? SuiColors.aqua
-                      : "rgba(192, 230, 255, 0.4)"
+                      ? "rgba(192, 230, 255, 0.6)"
+                      : "rgba(192, 230, 255, 0.3)"
                   }
                 />
-                <View style={styles.voiceSelectorText}>
-                  <ThemedText
-                    style={[
-                      styles.voiceSelectorTitle,
-                      !voiceService.isApiConfigured() && styles.disabledText,
-                    ]}
-                  >
-                    Voice Selection
-                  </ThemedText>
-                  <ThemedText
-                    style={[
-                      styles.voiceSelectorSubtitle,
-                      !voiceService.isApiConfigured() && styles.disabledText,
-                    ]}
-                  >
-                    {voiceService.isApiConfigured()
-                      ? `Current: ${voiceSettings.selectedVoice}`
-                      : "API key required to use voices"}
-                  </ThemedText>
-                </View>
               </View>
-              <IconSymbol
-                name="chevron.right"
-                size={16}
-                color={
-                  voiceService.isApiConfigured()
-                    ? "rgba(192, 230, 255, 0.6)"
-                    : "rgba(192, 230, 255, 0.3)"
-                }
-              />
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
+
+            {/* Dropdown Content */}
+            {showVoiceDropdown && (
+              <View style={styles.dropdownContainer}>
+                {!voiceService.isApiConfigured() && (
+                  <View style={styles.dropdownWarning}>
+                    <IconSymbol
+                      name="exclamationmark.triangle"
+                      size={16}
+                      color="#F59E0B"
+                    />
+                    <ThemedText style={styles.dropdownWarningText}>
+                      UnrealSpeech API key not configured
+                    </ThemedText>
+                  </View>
+                )}
+
+                <ScrollView
+                  style={styles.dropdownScrollView}
+                  nestedScrollEnabled={true}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {availableVoices.map(({ category, voices }) => {
+                    // Safety check for voices array
+                    if (
+                      !voices ||
+                      !Array.isArray(voices) ||
+                      voices.length === 0
+                    ) {
+                      return null;
+                    }
+
+                    return (
+                      <View key={category} style={styles.dropdownCategory}>
+                        <ThemedText style={styles.dropdownCategoryTitle}>
+                          {category}
+                        </ThemedText>
+                        {voices.map((voice) => (
+                          <TouchableOpacity
+                            key={voice}
+                            style={[
+                              styles.dropdownOption,
+                              voiceSettings.selectedVoice === voice &&
+                                styles.selectedDropdownOption,
+                              !voiceService.isApiConfigured() &&
+                                styles.dropdownOptionDisabled,
+                            ]}
+                            onPress={() => handleVoiceSelection(voice)}
+                            disabled={!voiceService.isApiConfigured()}
+                          >
+                            <ThemedText
+                              style={[
+                                styles.dropdownOptionText,
+                                voiceSettings.selectedVoice === voice &&
+                                  styles.selectedDropdownText,
+                                !voiceService.isApiConfigured() &&
+                                  styles.disabledText,
+                              ]}
+                            >
+                              {voice}
+                            </ThemedText>
+                            {voiceSettings.selectedVoice === voice && (
+                              <IconSymbol
+                                name="checkmark"
+                                size={14}
+                                color={
+                                  voiceService.isApiConfigured()
+                                    ? SuiColors.sea
+                                    : "rgba(77, 162, 255, 0.4)"
+                                }
+                              />
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+          </View>
 
           {/* Voice Info Note */}
           <View style={styles.infoNote}>
@@ -461,89 +534,6 @@ export default function SettingsScreen() {
           )}
         </View>
       </ScrollView>
-
-      {/* Voice Selection Modal */}
-      <Modal
-        visible={showVoiceModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowVoiceModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <ThemedText style={styles.modalTitle}>Select Voice</ThemedText>
-              <TouchableOpacity
-                style={styles.modalCloseButton}
-                onPress={() => setShowVoiceModal(false)}
-              >
-                <IconSymbol name="xmark" size={20} color={SuiColors.aqua} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalScrollView}>
-              {!voiceService.isApiConfigured() && (
-                <View style={styles.modalWarning}>
-                  <IconSymbol
-                    name="exclamationmark.triangle"
-                    size={20}
-                    color="#F59E0B"
-                  />
-                  <ThemedText style={styles.modalWarningText}>
-                    UnrealSpeech API key not configured. Voices are shown for
-                    preview only.
-                  </ThemedText>
-                </View>
-              )}
-
-              {getAllAvailableVoices().map(({ category, voices }) => (
-                <View key={category} style={styles.voiceCategory}>
-                  <ThemedText style={styles.voiceCategoryTitle}>
-                    {category}
-                  </ThemedText>
-                  {voices.map((voice) => (
-                    <TouchableOpacity
-                      key={voice}
-                      style={[
-                        styles.voiceOption,
-                        voiceSettings.selectedVoice === voice &&
-                          styles.selectedVoiceOption,
-                        !voiceService.isApiConfigured() &&
-                          styles.voiceOptionDisabled,
-                      ]}
-                      onPress={() => handleVoiceSelection(voice)}
-                      disabled={!voiceService.isApiConfigured()}
-                    >
-                      <ThemedText
-                        style={[
-                          styles.voiceOptionText,
-                          voiceSettings.selectedVoice === voice &&
-                            styles.selectedVoiceText,
-                          !voiceService.isApiConfigured() &&
-                            styles.disabledText,
-                        ]}
-                      >
-                        {voice}
-                      </ThemedText>
-                      {voiceSettings.selectedVoice === voice && (
-                        <IconSymbol
-                          name="checkmark"
-                          size={16}
-                          color={
-                            voiceService.isApiConfigured()
-                              ? "white"
-                              : "rgba(255, 255, 255, 0.4)"
-                          }
-                        />
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -665,6 +655,10 @@ const styles = StyleSheet.create({
     color: "rgba(192, 230, 255, 0.8)",
     lineHeight: 18,
   },
+  voiceSelectorContainer: {
+    position: "relative",
+    zIndex: 1000,
+  },
   voiceSelector: {
     backgroundColor: "rgba(77, 162, 255, 0.05)",
     borderWidth: 1,
@@ -675,6 +669,9 @@ const styles = StyleSheet.create({
   },
   voiceSelectorDisabled: {
     opacity: 0.6,
+  },
+  voiceSelectorActive: {
+    backgroundColor: "rgba(77, 162, 255, 0.1)",
   },
   voiceSelectorContent: {
     flexDirection: "row",
@@ -702,44 +699,25 @@ const styles = StyleSheet.create({
   disabledText: {
     color: "rgba(192, 230, 255, 0.4)",
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    justifyContent: "flex-end",
-  },
-  modalContent: {
+  dropdownContainer: {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    right: 0,
     backgroundColor: SuiColors.deepOcean,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: "80%",
     borderWidth: 1,
     borderColor: "rgba(77, 162, 255, 0.2)",
+    borderRadius: 12,
+    padding: 16,
+    maxHeight: 300,
+    zIndex: 1001,
+    shadowColor: SuiColors.sea,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(77, 162, 255, 0.1)",
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: SuiColors.aqua,
-  },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(77, 162, 255, 0.1)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalScrollView: {
-    flex: 1,
-  },
-  modalWarning: {
+  dropdownWarning: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(245, 158, 11, 0.1)",
@@ -747,27 +725,29 @@ const styles = StyleSheet.create({
     borderColor: "rgba(245, 158, 11, 0.2)",
     borderRadius: 8,
     padding: 12,
-    margin: 20,
     marginBottom: 10,
   },
-  modalWarningText: {
+  dropdownWarningText: {
     fontSize: 13,
     color: "#F59E0B",
     marginLeft: 8,
     flex: 1,
     lineHeight: 18,
   },
-  voiceCategory: {
-    padding: 20,
-    paddingTop: 16,
+  dropdownScrollView: {
+    maxHeight: 200,
   },
-  voiceCategoryTitle: {
+  dropdownCategory: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  dropdownCategoryTitle: {
     fontSize: 16,
     fontWeight: "600",
     color: SuiColors.aqua,
     marginBottom: 12,
   },
-  voiceOption: {
+  dropdownOption: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -778,38 +758,20 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 8,
   },
-  selectedVoiceOption: {
+  selectedDropdownOption: {
     backgroundColor: SuiColors.sea,
     borderColor: SuiColors.sea,
   },
-  voiceOptionDisabled: {
+  dropdownOptionDisabled: {
     opacity: 0.5,
   },
-  voiceOptionText: {
+  dropdownOptionText: {
     fontSize: 15,
     color: SuiColors.aqua,
   },
-  selectedVoiceText: {
+  selectedDropdownText: {
     color: "white",
     fontWeight: "600",
-  },
-  apiCard: {
-    backgroundColor: "rgba(77, 162, 255, 0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(77, 162, 255, 0.2)",
-    borderRadius: 12,
-    padding: 16,
-  },
-  apiTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: SuiColors.aqua,
-    marginBottom: 8,
-  },
-  apiDescription: {
-    fontSize: 13,
-    color: "rgba(192, 230, 255, 0.7)",
-    lineHeight: 18,
   },
   statsCard: {
     backgroundColor: "rgba(77, 162, 255, 0.05)",
