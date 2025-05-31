@@ -46,12 +46,19 @@ class AIService {
     this.openaiApiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY || null;
     this.geminiApiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY || null;
     
+    console.log('[AIService] Initialization:');
+    console.log('  OpenAI API Key:', this.openaiApiKey ? `${this.openaiApiKey.substring(0, 10)}...` : 'Not configured');
+    console.log('  Gemini API Key:', this.geminiApiKey ? `${this.geminiApiKey.substring(0, 10)}...` : 'Not configured');
+    
     if (this.openaiApiKey && this.openaiApiKey.trim() !== '' && !this.openaiApiKey.includes('your_openai_api_key_here')) {
       this.openai = new OpenAI({
         apiKey: this.openaiApiKey,
         dangerouslyAllowBrowser: true,
       });
       this.apiKeyAvailable = true;
+      console.log('[AIService] OpenAI client initialized successfully');
+    } else {
+      console.log('[AIService] OpenAI not configured or using placeholder');
     }
   }
 
@@ -83,30 +90,44 @@ Always consider the user's wallet data when answering questions.`;
   }
 
   async askMultipleAIs(question: string, walletData: WalletData | null, enabledProviders?: { openai: boolean; gemini: boolean }): Promise<ChatMessage[]> {
+    console.log('[AIService] askMultipleAIs called:');
+    console.log('  Question:', question.substring(0, 100) + '...');
+    console.log('  Enabled providers filter:', enabledProviders);
+    
     const responses: ChatMessage[] = [];
     const providers = this.getAvailableProviders();
+
+    console.log('  Available providers:', providers.map(p => ({ id: p.id, name: p.name, enabled: p.enabled })));
 
     const promises = providers
       .filter(provider => {
         // If enabledProviders filter is provided, respect it
         if (enabledProviders) {
-          return provider.enabled && enabledProviders[provider.id];
+          const shouldInclude = provider.enabled && enabledProviders[provider.id];
+          console.log(`  Provider ${provider.id}: available=${provider.enabled}, user_enabled=${enabledProviders[provider.id]}, included=${shouldInclude}`);
+          return shouldInclude;
         }
         // Otherwise, include all available providers
+        console.log(`  Provider ${provider.id}: available=${provider.enabled}, included=${provider.enabled}`);
         return provider.enabled;
       })
       .map(async (provider) => {
+        console.log(`[AIService] Starting request for provider: ${provider.id}`);
         try {
           let response: string;
           
           if (provider.id === 'openai' && this.openaiApiKey) {
+            console.log(`[AIService] Calling OpenAI...`);
             response = await this.askOpenAI(question, walletData);
           } else if (provider.id === 'gemini' && this.geminiApiKey) {
+            console.log(`[AIService] Calling Gemini...`);
             response = await this.askGemini(question, walletData);
           } else {
+            console.log(`[AIService] Provider ${provider.id} not configured`);
             response = `${provider.name} is not configured. Please add the API key.`;
           }
 
+          console.log(`[AIService] ${provider.id} response:`, response.substring(0, 200) + '...');
           return {
             id: `${provider.id}-${Date.now()}`,
             text: response,
@@ -114,6 +135,7 @@ Always consider the user's wallet data when answering questions.`;
             timestamp: Date.now(),
           } as ChatMessage;
         } catch (error) {
+          console.error(`[AIService] Error from ${provider.id}:`, error);
           return {
             id: `${provider.id}-error-${Date.now()}`,
             text: `${provider.name} encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -125,12 +147,16 @@ Always consider the user's wallet data when answering questions.`;
 
     const results = await Promise.allSettled(promises);
     
-    results.forEach((result) => {
+    results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
+        console.log(`[AIService] Promise ${index} fulfilled:`, result.value.sender);
         responses.push(result.value);
+      } else {
+        console.error(`[AIService] Promise ${index} rejected:`, result.reason);
       }
     });
 
+    console.log(`[AIService] Final responses count: ${responses.length}`);
     return responses;
   }
 
@@ -146,7 +172,7 @@ Always consider the user's wallet data when answering questions.`;
         'Authorization': `Bearer ${this.openaiApiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -171,51 +197,102 @@ Always consider the user's wallet data when answering questions.`;
   }
 
   private async askGemini(question: string, walletData: WalletData | null): Promise<string> {
+    console.log('[AIService] askGemini called');
+    
     if (!this.geminiApiKey) {
+      console.error('[AIService] Gemini API key not configured');
       throw new Error('Gemini API key not configured');
     }
 
+    console.log('[AIService] Gemini API key available:', this.geminiApiKey.substring(0, 10) + '...');
+
     const prompt = `${this.getSecurityPrompt(walletData)}\n\nUser Question: ${question}`;
+    console.log('[AIService] Gemini prompt length:', prompt.length);
+    console.log('[AIService] Gemini prompt preview:', prompt.substring(0, 300) + '...');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${this.geminiApiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const requestPayload = {
+      contents: [{
+        parts: [{
+          text: prompt
+        }]
+      }],
+      generationConfig: {
+        maxOutputTokens: 200,
+        temperature: 0.7,
       },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }],
-        generationConfig: {
-          maxOutputTokens: 200,
-          temperature: 0.7,
+    };
+
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`;
+    console.log('[AIService] Gemini API URL (without key):', apiUrl.replace(this.geminiApiKey, '[API_KEY]'));
+    console.log('[AIService] Gemini request payload:', JSON.stringify(requestPayload, null, 2));
+
+    try {
+      console.log('[AIService] Making Gemini API request...');
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      }),
-    });
+        body: JSON.stringify(requestPayload),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status}`);
+      console.log('[AIService] Gemini response status:', response.status);
+      console.log('[AIService] Gemini response headers:', JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2));
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[AIService] Gemini API error response:', errorText);
+        throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+      }
+
+      const responseText = await response.text();
+      console.log('[AIService] Gemini raw response:', responseText);
+
+      let data;
+      try {
+        data = JSON.parse(responseText);
+        console.log('[AIService] Gemini parsed response:', JSON.stringify(data, null, 2));
+      } catch (parseError) {
+        console.error('[AIService] Failed to parse Gemini response as JSON:', parseError);
+        throw new Error(`Failed to parse Gemini response: ${parseError}`);
+      }
+
+      const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      console.log('[AIService] Gemini extracted text:', generatedText);
+
+      if (!generatedText) {
+        console.error('[AIService] No text found in Gemini response structure');
+        console.error('[AIService] Response structure:', JSON.stringify(data, null, 2));
+        throw new Error('No response generated from Gemini');
+      }
+
+      return generatedText;
+    } catch (error) {
+      console.error('[AIService] Gemini request failed:', error);
+      if (error instanceof Error) {
+        console.error('[AIService] Error message:', error.message);
+        console.error('[AIService] Error stack:', error.stack);
+      }
+      throw error;
     }
-
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
   }
 
   getAvailableProviders(): AIProvider[] {
-    return [
+    const providers = [
       {
         name: 'OpenAI GPT',
-        id: 'openai',
+        id: 'openai' as const,
         enabled: !!this.openaiApiKey,
       },
       {
         name: 'Google Gemini',
-        id: 'gemini',
+        id: 'gemini' as const,
         enabled: !!this.geminiApiKey,
       },
     ];
+    
+    console.log('[AIService] getAvailableProviders:', providers);
+    return providers;
   }
 
   async analyzeWallet(walletData: WalletData): Promise<AnalysisResult> {
@@ -269,7 +346,7 @@ Format your response as JSON with the structure:
           'Authorization': `Bearer ${this.openaiApiKey}`,
         },
         body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
+          model: 'gpt-4o-mini',
           messages: [
             {
               role: 'system',
@@ -370,4 +447,8 @@ Format your response as JSON with the structure:
   }
 }
 
-export const aiService = new AIService(); 
+export const aiService = new AIService();
+
+// Debug logging
+console.log('[AIService] Service instantiated');
+console.log('[AIService] Available providers at startup:', aiService.getAvailableProviders()); 
