@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { IconSymbol } from "@/components/ui/IconSymbol";
 import { ThemedText } from "@/components/ThemedText";
 import { SuiColors } from "@/constants/Colors";
 import { aiService, ChatMessage, AIProvider } from "@/services/aiService";
@@ -175,7 +176,7 @@ export default function ChatScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <ThemedText style={styles.headerTitle}>AI Security Chat</ThemedText>
+          <ThemedText style={styles.headerTitle}>AI Chat</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
             {
               availableProviders.filter(
@@ -250,13 +251,16 @@ export default function ChatScreen() {
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.textInput}
-              placeholder="Ask ."
-              placeholderTextColor="rgba(192, 230, 255, 0.6)"
+              placeholder="Ask about Sui & DeFi security..."
+              placeholderTextColor="rgba(192, 230, 255, 0.5)"
               value={inputText}
               onChangeText={setInputText}
               multiline
               maxLength={500}
               editable={!isLoading}
+              returnKeyType="send"
+              blurOnSubmit={false}
+              onSubmitEditing={handleSendMessage}
             />
             <TouchableOpacity
               style={[
@@ -266,7 +270,7 @@ export default function ChatScreen() {
               onPress={handleSendMessage}
               disabled={!inputText.trim() || isLoading}
             >
-              <ThemedText style={styles.sendButtonText}>Send</ThemedText>
+              <IconSymbol name="paperplane.fill" size={24} color="white" />
             </TouchableOpacity>
           </View>
         </View>
@@ -390,41 +394,50 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 20,
     borderTopWidth: 1,
-    borderTopColor: "rgba(77, 162, 255, 0.1)",
-    backgroundColor: "rgba(1, 24, 41, 0.8)",
+    borderTopColor: "rgba(77, 162, 255, 0.15)",
+    backgroundColor: "rgba(1, 24, 41, 0.95)",
+    backdropFilter: "blur(20px)",
   },
   inputWrapper: {
     flexDirection: "row",
     alignItems: "flex-end",
-    backgroundColor: "rgba(77, 162, 255, 0.1)",
-    borderRadius: 20,
+    backgroundColor: "rgba(77, 162, 255, 0.08)",
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: "rgba(77, 162, 255, 0.2)",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    borderColor: "rgba(77, 162, 255, 0.25)",
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    shadowColor: SuiColors.sea,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   textInput: {
     flex: 1,
     color: SuiColors.aqua,
-    fontSize: 15,
-    maxHeight: 100,
-    minHeight: 20,
-    marginRight: 12,
+    fontSize: 16,
+    lineHeight: 22,
+    maxHeight: 120,
+    minHeight: 24,
+    marginRight: 16,
+    fontWeight: "400",
   },
   sendButton: {
-    backgroundColor: SuiColors.sea,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    borderRadius: 8,
+    width: 24,
+    height: 24,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: SuiColors.sea,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   disabledButton: {
     opacity: 0.5,
-  },
-  sendButtonText: {
-    color: "white",
-    fontWeight: "600",
-    fontSize: 14,
   },
 });
