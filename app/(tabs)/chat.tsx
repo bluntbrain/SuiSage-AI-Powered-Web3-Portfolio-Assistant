@@ -15,6 +15,10 @@ import { IconSymbol } from "@/components/ui/IconSymbol";
 import { ThemedText } from "@/components/ThemedText";
 import { SuiColors } from "@/constants/Colors";
 import { aiService, ChatMessage, AIProvider } from "@/services/aiService";
+import {
+  trainingDataService,
+  ComparisonSession,
+} from "@/services/trainingDataService";
 import { useWallet } from "@/contexts/WalletContext";
 
 export default function ChatScreen() {
@@ -27,6 +31,11 @@ export default function ChatScreen() {
   const [availableProviders, setAvailableProviders] = useState<AIProvider[]>(
     []
   );
+  const [currentSession, setCurrentSession] =
+    useState<ComparisonSession | null>(null);
+  const [selectedResponses, setSelectedResponses] = useState<{
+    [sessionId: string]: "openai" | "gemini";
+  }>({});
 
   useEffect(() => {
     setAvailableProviders(aiService.getAvailableProviders());
@@ -70,6 +79,18 @@ export default function ChatScreen() {
       timestamp: Date.now(),
     };
 
+    // Create comparison session for training data
+    const sessionId = `session-${Date.now()}`;
+    const newSession: ComparisonSession = {
+      id: sessionId,
+      timestamp: Date.now(),
+      question: inputText.trim(),
+      walletData: walletData,
+      responses: {},
+      selectedBetter: null,
+    };
+    setCurrentSession(newSession);
+
     setMessages((prev) => [...prev, userMessage]);
     setInputText("");
     setIsLoading(true);
@@ -81,6 +102,7 @@ export default function ChatScreen() {
       sender: provider.id,
       timestamp: Date.now(),
       isLoading: true,
+      sessionId: sessionId, // Associate with session
     }));
 
     setMessages((prev) => [...prev, ...loadingMessages]);
@@ -92,15 +114,27 @@ export default function ChatScreen() {
         aiProviderSettings
       );
 
-      // Filter responses to only include enabled providers
-      const filteredResponses = aiResponses.filter(
-        (response) => aiProviderSettings[response.sender as "openai" | "gemini"]
-      );
+      // Add session ID to responses and update session data
+      const responsesWithSession = aiResponses.map((response) => ({
+        ...response,
+        sessionId: sessionId,
+      }));
 
-      // Filter out loading messages and add real responses
+      // Update session with actual responses
+      const updatedSession = { ...newSession };
+      responsesWithSession.forEach((response) => {
+        if (response.sender === "openai") {
+          updatedSession.responses.openai = response.text;
+        } else if (response.sender === "gemini") {
+          updatedSession.responses.gemini = response.text;
+        }
+      });
+      setCurrentSession(updatedSession);
+
+      // Remove loading messages and add real responses
       setMessages((prev) => {
         const withoutLoading = prev.filter((msg) => !msg.isLoading);
-        return [...withoutLoading, ...filteredResponses];
+        return [...withoutLoading, ...responsesWithSession];
       });
     } catch (error) {
       const errorMessage: ChatMessage = {
@@ -118,6 +152,33 @@ export default function ChatScreen() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResponseSelection = async (
+    sessionId: string,
+    selectedProvider: "openai" | "gemini"
+  ) => {
+    try {
+      // Update local state
+      setSelectedResponses((prev) => ({
+        ...prev,
+        [sessionId]: selectedProvider,
+      }));
+
+      // Find the session and save training data
+      if (currentSession && currentSession.id === sessionId) {
+        const updatedSession = {
+          ...currentSession,
+          selectedBetter: selectedProvider,
+        };
+        await trainingDataService.saveComparisonData(updatedSession);
+        console.log(
+          `[Chat] Saved training data: ${selectedProvider} selected for session ${sessionId}`
+        );
+      }
+    } catch (error) {
+      console.error("[Chat] Failed to save training data:", error);
     }
   };
 
@@ -236,6 +297,47 @@ export default function ChatScreen() {
                 >
                   {message.text}
                 </ThemedText>
+
+                {/* Selection buttons for AI responses */}
+                {message.sender !== "user" &&
+                  !message.isLoading &&
+                  message.sessionId && (
+                    <View style={styles.selectionContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.selectionButton,
+                          selectedResponses[message.sessionId] ===
+                            message.sender && styles.selectedButton,
+                        ]}
+                        onPress={() =>
+                          handleResponseSelection(
+                            message.sessionId!,
+                            message.sender as "openai" | "gemini"
+                          )
+                        }
+                      >
+                        <IconSymbol
+                          name="hand.thumbsup.fill"
+                          size={14}
+                          color={
+                            selectedResponses[message.sessionId] ===
+                            message.sender
+                              ? "white"
+                              : "rgba(192, 230, 255, 0.6)"
+                          }
+                        />
+                        <ThemedText
+                          style={[
+                            styles.selectionText,
+                            selectedResponses[message.sessionId] ===
+                              message.sender && styles.selectedText,
+                          ]}
+                        >
+                          Better
+                        </ThemedText>
+                      </TouchableOpacity>
+                    </View>
+                  )}
               </View>
             </View>
           ))}
@@ -439,5 +541,33 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.5,
+  },
+  selectionContainer: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 8,
+  },
+  selectionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: "rgba(77, 162, 255, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+  },
+  selectedButton: {
+    backgroundColor: SuiColors.sea,
+    borderColor: SuiColors.sea,
+  },
+  selectionText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(192, 230, 255, 0.8)",
+    marginLeft: 4,
+  },
+  selectedText: {
+    color: "white",
   },
 });

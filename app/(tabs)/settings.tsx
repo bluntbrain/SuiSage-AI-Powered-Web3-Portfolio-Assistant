@@ -1,16 +1,79 @@
-import React from "react";
-import { View, StyleSheet, ScrollView, Switch, StatusBar } from "react-native";
+import React, { useState, useEffect } from "react";
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Switch,
+  StatusBar,
+  Alert,
+  TouchableOpacity,
+} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { router } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
+import { IconSymbol } from "@/components/ui/IconSymbol";
 import { ThemedText } from "@/components/ThemedText";
 import { SuiColors } from "@/constants/Colors";
 import { useWallet } from "@/contexts/WalletContext";
 import { aiService } from "@/services/aiService";
+import { trainingDataService } from "@/services/trainingDataService";
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { aiProviderSettings, toggleAIProvider } = useWallet();
   const availableProviders = aiService.getAvailableProviders();
+  const [trainingStats, setTrainingStats] = useState({
+    total: 0,
+    withSelections: 0,
+    openaiWins: 0,
+    geminiWins: 0,
+  });
+
+  useEffect(() => {
+    loadTrainingStats();
+  }, []);
+
+  const loadTrainingStats = async () => {
+    const stats = await trainingDataService.getStats();
+    setTrainingStats(stats);
+  };
+
+  const exportTrainingData = async () => {
+    try {
+      const data = await trainingDataService.getTrainingDataForExport();
+
+      // In a real app, you'd save this to a file or send to a server
+      console.log("[Settings] Training data exported:", data);
+
+      Alert.alert(
+        "Training Data Exported",
+        `Exported ${trainingStats.withSelections} training samples. Check console for data.`,
+        [{ text: "OK" }]
+      );
+    } catch (error) {
+      Alert.alert("Export Failed", "Could not export training data.");
+    }
+  };
+
+  const clearTrainingData = async () => {
+    Alert.alert(
+      "Clear Training Data",
+      "This will permanently delete all collected training data. Continue?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: async () => {
+            await trainingDataService.clearAllData();
+            await loadTrainingStats();
+            Alert.alert("Data Cleared", "All training data has been removed.");
+          },
+        },
+      ]
+    );
+  };
 
   const getProviderInfo = (providerId: "openai" | "gemini") => {
     const provider = availableProviders.find((p) => p.id === providerId);
@@ -24,6 +87,10 @@ export default function SettingsScreen() {
     const otherProvider = provider === "openai" ? "gemini" : "openai";
     return aiProviderSettings[otherProvider] === true;
   };
+
+  useFocusEffect(() => {
+    loadTrainingStats();
+  });
 
   return (
     <View style={styles.container}>
@@ -151,19 +218,94 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* API Keys Section */}
+        {/* Training Data Section */}
         <View style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>API Configuration</ThemedText>
-          <View style={styles.apiCard}>
-            <ThemedText style={styles.apiTitle}>
-              Environment Variables
-            </ThemedText>
-            <ThemedText style={styles.apiDescription}>
-              Set your API keys in the .env file:
-              {"\n"}• EXPO_PUBLIC_OPENAI_API_KEY
-              {"\n"}• EXPO_PUBLIC_GEMINI_API_KEY
-            </ThemedText>
+          <ThemedText style={styles.sectionTitle}>Training Data</ThemedText>
+          <ThemedText style={styles.sectionDescription}>
+            User feedback helps improve AI responses. Data is stored locally.
+          </ThemedText>
+
+          {/* Stats Card */}
+          <View style={styles.statsCard}>
+            <ThemedText style={styles.statsTitle}>Collection Stats</ThemedText>
+            <View style={styles.statsRow}>
+              <View style={styles.statItem}>
+                <ThemedText style={styles.statNumber}>
+                  {trainingStats.total}
+                </ThemedText>
+                <ThemedText style={styles.statLabel}>Total Sessions</ThemedText>
+              </View>
+              <View style={styles.statItem}>
+                <ThemedText style={styles.statNumber}>
+                  {trainingStats.withSelections}
+                </ThemedText>
+                <ThemedText style={styles.statLabel}>With Feedback</ThemedText>
+              </View>
+            </View>
+            <View style={styles.statsRow}>
+              <View style={styles.statItem}>
+                <ThemedText style={styles.statNumber}>
+                  {trainingStats.openaiWins}
+                </ThemedText>
+                <ThemedText style={styles.statLabel}>OpenAI Wins</ThemedText>
+              </View>
+              <View style={styles.statItem}>
+                <ThemedText style={styles.statNumber}>
+                  {trainingStats.geminiWins}
+                </ThemedText>
+                <ThemedText style={styles.statLabel}>Gemini Wins</ThemedText>
+              </View>
+            </View>
           </View>
+
+          {/* Action Buttons */}
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={exportTrainingData}
+            >
+              <ThemedText style={styles.actionButtonText}>
+                Export Data
+              </ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.dangerButton]}
+              onPress={clearTrainingData}
+            >
+              <ThemedText style={styles.actionButtonText}>
+                Clear Data
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
+
+          {/* Comparison Dashboard Button */}
+          {trainingStats.withSelections > 0 && (
+            <TouchableOpacity
+              style={styles.dashboardButton}
+              onPress={() => router.push("/comparison")}
+            >
+              <View style={styles.dashboardButtonContent}>
+                <IconSymbol
+                  name="chart.bar.fill"
+                  size={20}
+                  color={SuiColors.aqua}
+                />
+                <View style={styles.dashboardButtonText}>
+                  <ThemedText style={styles.dashboardButtonTitle}>
+                    View AI Comparison Dashboard
+                  </ThemedText>
+                  <ThemedText style={styles.dashboardButtonSubtitle}>
+                    Analyze model performance and trends
+                  </ThemedText>
+                </View>
+                <IconSymbol
+                  name="chevron.right"
+                  size={16}
+                  color="rgba(192, 230, 255, 0.6)"
+                />
+              </View>
+            </TouchableOpacity>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -304,5 +446,83 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "rgba(192, 230, 255, 0.7)",
     lineHeight: 18,
+  },
+  statsCard: {
+    backgroundColor: "rgba(77, 162, 255, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  statsTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginBottom: 8,
+  },
+  statsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  statItem: {
+    flex: 1,
+  },
+  statNumber: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+  },
+  statLabel: {
+    fontSize: 13,
+    color: "rgba(192, 230, 255, 0.7)",
+  },
+  buttonRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  actionButton: {
+    backgroundColor: "rgba(77, 162, 255, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    borderRadius: 8,
+    padding: 12,
+  },
+  actionButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+  },
+  dangerButton: {
+    backgroundColor: "rgba(255, 0, 0, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 0, 0, 0.2)",
+  },
+  dashboardButton: {
+    backgroundColor: "rgba(77, 162, 255, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+  },
+  dashboardButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  dashboardButtonText: {
+    flex: 1,
+    marginHorizontal: 12,
+  },
+  dashboardButtonTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginBottom: 4,
+  },
+  dashboardButtonSubtitle: {
+    fontSize: 13,
+    color: "rgba(192, 230, 255, 0.7)",
   },
 });

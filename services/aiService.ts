@@ -28,6 +28,7 @@ export interface ChatMessage {
   sender: 'user' | 'openai' | 'gemini';
   timestamp: number;
   isLoading?: boolean;
+  sessionId?: string;
 }
 
 export interface AIProvider {
