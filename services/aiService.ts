@@ -12,216 +12,360 @@ export interface AIAdvice {
 
 export interface AnalysisResult {
   summary: string;
-  advice: AIAdvice[];
+  portfolioHealth: 'excellent' | 'good' | 'fair' | 'poor';
   riskScore: number;
-  portfolioHealth: 'poor' | 'fair' | 'good' | 'excellent';
+  advice: {
+    title: string;
+    description: string;
+    priority: 'high' | 'medium' | 'low';
+    estimatedSavings?: string;
+  }[];
+}
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  sender: 'user' | 'openai' | 'gemini';
+  timestamp: number;
+  isLoading?: boolean;
+}
+
+export interface AIProvider {
+  name: string;
+  id: 'openai' | 'gemini';
+  enabled: boolean;
 }
 
 class AIService {
   private openai: OpenAI | null = null;
   private apiKeyAvailable: boolean = false;
+  private openaiApiKey: string | null = null;
+  private geminiApiKey: string | null = null;
 
   constructor() {
-    const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
+    this.openaiApiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY || null;
+    this.geminiApiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY || null;
     
-    if (apiKey && apiKey.trim() !== '' && !apiKey.includes('your_openai_api_key_here')) {
+    if (this.openaiApiKey && this.openaiApiKey.trim() !== '' && !this.openaiApiKey.includes('your_openai_api_key_here')) {
       this.openai = new OpenAI({
-        apiKey,
+        apiKey: this.openaiApiKey,
         dangerouslyAllowBrowser: true,
       });
       this.apiKeyAvailable = true;
     }
   }
 
+  private getSecurityPrompt(walletData: WalletData | null): string {
+    const walletInfo = walletData ? `
+Wallet Address: ${walletData.address}
+SUI Balance: ${walletData.balance.toFixed(4)} SUI
+Total Assets: ${walletData.assets.length}
+Recent Transactions: ${walletData.transactions.length}
+Transaction Details: ${JSON.stringify(walletData.transactions.slice(0, 5), null, 2)}
+Asset Details: ${JSON.stringify(walletData.assets, null, 2)}
+` : 'No wallet data available';
+
+    return `You are a security-focused Web3 and Sui blockchain assistant. Your primary role is to help users understand their wallet security, transaction patterns, and potential risks.
+
+WALLET DATA:
+${walletInfo}
+
+GUIDELINES:
+- Focus on security, privacy, and best practices
+- Analyze transaction patterns for unusual activity
+- Provide actionable security recommendations
+- Explain blockchain concepts in simple terms
+- Flag potential risks or suspicious activities
+- Suggest ways to improve wallet security
+- Be concise but thorough (max 3-4 sentences per response)
+
+Always consider the user's wallet data when answering questions.`;
+  }
+
+  async askMultipleAIs(question: string, walletData: WalletData | null, enabledProviders?: { openai: boolean; gemini: boolean }): Promise<ChatMessage[]> {
+    const responses: ChatMessage[] = [];
+    const providers = this.getAvailableProviders();
+
+    const promises = providers
+      .filter(provider => {
+        // If enabledProviders filter is provided, respect it
+        if (enabledProviders) {
+          return provider.enabled && enabledProviders[provider.id];
+        }
+        // Otherwise, include all available providers
+        return provider.enabled;
+      })
+      .map(async (provider) => {
+        try {
+          let response: string;
+          
+          if (provider.id === 'openai' && this.openaiApiKey) {
+            response = await this.askOpenAI(question, walletData);
+          } else if (provider.id === 'gemini' && this.geminiApiKey) {
+            response = await this.askGemini(question, walletData);
+          } else {
+            response = `${provider.name} is not configured. Please add the API key.`;
+          }
+
+          return {
+            id: `${provider.id}-${Date.now()}`,
+            text: response,
+            sender: provider.id,
+            timestamp: Date.now(),
+          } as ChatMessage;
+        } catch (error) {
+          return {
+            id: `${provider.id}-error-${Date.now()}`,
+            text: `${provider.name} encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            sender: provider.id,
+            timestamp: Date.now(),
+          } as ChatMessage;
+        }
+      });
+
+    const results = await Promise.allSettled(promises);
+    
+    results.forEach((result) => {
+      if (result.status === 'fulfilled') {
+        responses.push(result.value);
+      }
+    });
+
+    return responses;
+  }
+
+  private async askOpenAI(question: string, walletData: WalletData | null): Promise<string> {
+    if (!this.openaiApiKey) {
+      throw new Error('OpenAI API key not configured');
+    }
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'system',
+            content: this.getSecurityPrompt(walletData),
+          },
+          {
+            role: 'user',
+            content: question,
+          },
+        ],
+        max_tokens: 200,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || 'No response generated';
+  }
+
+  private async askGemini(question: string, walletData: WalletData | null): Promise<string> {
+    if (!this.geminiApiKey) {
+      throw new Error('Gemini API key not configured');
+    }
+
+    const prompt = `${this.getSecurityPrompt(walletData)}\n\nUser Question: ${question}`;
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${this.geminiApiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: prompt
+          }]
+        }],
+        generationConfig: {
+          maxOutputTokens: 200,
+          temperature: 0.7,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Gemini API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
+  }
+
+  getAvailableProviders(): AIProvider[] {
+    return [
+      {
+        name: 'OpenAI GPT',
+        id: 'openai',
+        enabled: !!this.openaiApiKey,
+      },
+      {
+        name: 'Google Gemini',
+        id: 'gemini',
+        enabled: !!this.geminiApiKey,
+      },
+    ];
+  }
+
   async analyzeWallet(walletData: WalletData): Promise<AnalysisResult> {
-    if (!this.openai || !this.apiKeyAvailable) {
-      return this.fallbackAnalysis(walletData);
+    const analysis = `Please analyze this Sui wallet and provide insights:
+
+Wallet: ${walletData.address}
+Balance: ${walletData.balance} SUI
+Assets: ${walletData.assets.length} different types
+Recent Transactions: ${walletData.transactions.length}
+
+Transaction Details:
+${walletData.transactions.map(tx => 
+  `- ${tx.kind} (${tx.success ? 'Success' : 'Failed'}) - Gas: ${tx.gasUsed} - ${new Date(tx.timestamp).toLocaleDateString()}`
+).join('\n')}
+
+Asset Breakdown:
+${walletData.assets.map(asset => 
+  `- ${asset.symbol}: ${asset.balance} (${asset.coinType})`
+).join('\n')}
+
+Please provide:
+1. Overall portfolio health assessment
+2. Risk score (1-10, where 10 is highest risk)
+3. Specific recommendations for improvement
+4. Any security concerns or opportunities
+
+Format your response as JSON with the structure:
+{
+  "summary": "Brief overall assessment",
+  "portfolioHealth": "excellent|good|fair|poor",
+  "riskScore": number,
+  "advice": [
+    {
+      "title": "Recommendation title",
+      "description": "Detailed explanation",
+      "priority": "high|medium|low",
+      "estimatedSavings": "Optional estimated savings"
+    }
+  ]
+}`;
+
+    if (!this.openaiApiKey) {
+      return this.getRuleBasedAnalysis(walletData);
     }
 
     try {
-      const result = await this.tryOpenAIAnalysis(walletData);
-      return result;
-    } catch (error) {
-      return this.fallbackAnalysis(walletData);
-    }
-  }
-
-  private async tryOpenAIAnalysis(walletData: WalletData): Promise<AnalysisResult> {
-    if (!this.openai) {
-      throw new Error('OpenAI client not initialized');
-    }
-
-    const prompt = this.createAnalysisPrompt(walletData);
-    
-    const completion = await this.openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: "You are a Web3 portfolio advisor specializing in the Sui blockchain. Analyze the provided wallet data and give actionable advice for gas optimization, staking opportunities, portfolio diversification, and risk management. Respond ONLY with valid JSON format, no additional text or formatting."
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.openaiApiKey}`,
         },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      max_tokens: 1000,
-      temperature: 0.7,
-    });
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an expert Web3 portfolio analyst. Respond only with valid JSON.',
+            },
+            {
+              role: 'user',
+              content: analysis,
+            },
+          ],
+          max_tokens: 800,
+          temperature: 0.3,
+        }),
+      });
 
-    const response = completion.choices[0]?.message?.content;
-    if (response) {
-      try {
-        const cleanedResponse = response.trim();
-        
-        let jsonString = cleanedResponse;
-        const jsonStart = cleanedResponse.indexOf('{');
-        const jsonEnd = cleanedResponse.lastIndexOf('}');
-        
-        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-          jsonString = cleanedResponse.substring(jsonStart, jsonEnd + 1);
-        }
-        
-        const parsed = JSON.parse(jsonString);
-        
-        if (parsed && parsed.summary && parsed.advice && Array.isArray(parsed.advice)) {
-          return parsed;
-        } else {
-          throw new Error('Invalid response structure');
-        }
-      } catch (parseError) {
-        throw parseError;
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+      let content = data.choices?.[0]?.message?.content;
+
+      if (!content) {
+        throw new Error('No content in response');
+      }
+
+      try {
+        content = content.replace(/```json\n?|\n?```/g, '').trim();
+        
+        if (content.includes('```')) {
+          const jsonMatch = content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            content = jsonMatch[0];
+          }
+        }
+
+        const parsed = JSON.parse(content);
+        return parsed;
+      } catch (parseError) {
+        return this.getRuleBasedAnalysis(walletData);
+      }
+    } catch (error) {
+      return this.getRuleBasedAnalysis(walletData);
     }
-    
-    throw new Error('Empty response from OpenAI');
   }
 
-  private createAnalysisPrompt(walletData: WalletData): string {
-    const { balance, assets, transactions } = walletData;
+  private getRuleBasedAnalysis(walletData: WalletData): AnalysisResult {
+    const balance = walletData.balance;
+    const transactionCount = walletData.transactions.length;
+    const successfulTxs = walletData.transactions.filter(tx => tx.success).length;
+    const failureRate = transactionCount > 0 ? (transactionCount - successfulTxs) / transactionCount : 0;
     
-    const recentTxs = transactions.slice(0, 5);
-    const totalGasUsed = transactions.reduce((sum, tx) => sum + tx.gasUsed, 0);
-    const successRate = transactions.length > 0 ? transactions.filter(tx => tx.success).length / transactions.length * 100 : 100;
-
-    return `Analyze this Sui wallet and respond with ONLY valid JSON:
-
-Wallet Data:
-- Address: ${walletData.address}
-- SUI Balance: ${balance.toFixed(4)} SUI
-- Total Assets: ${assets.length}
-- Recent Transactions: ${recentTxs.length}
-- Total Gas Used: ${totalGasUsed} MIST
-- Success Rate: ${successRate.toFixed(1)}%
-
-Assets:
-${assets.map(asset => `- ${asset.symbol}: ${asset.balance}`).join('\n')}
-
-Recent Transactions:
-${recentTxs.map(tx => `- ${tx.kind} (Gas: ${tx.gasUsed} MIST, Success: ${tx.success})`).join('\n')}
-
-Respond with this exact JSON structure:
-{
-  "summary": "Brief portfolio overview in one sentence",
-  "advice": [
-    {
-      "category": "gas",
-      "title": "Short advice title",
-      "description": "Detailed explanation",
-      "actionable": true,
-      "priority": "medium",
-      "estimatedSavings": "Optional savings estimate"
+    let portfolioHealth: 'excellent' | 'good' | 'fair' | 'poor' = 'poor';
+    let riskScore = 8;
+    
+    if (balance > 100 && failureRate < 0.1) {
+      portfolioHealth = 'excellent';
+      riskScore = 2;
+    } else if (balance > 10 && failureRate < 0.2) {
+      portfolioHealth = 'good';
+      riskScore = 4;
+    } else if (balance > 1) {
+      portfolioHealth = 'fair';
+      riskScore = 6;
     }
-  ],
-  "riskScore": 5,
-  "portfolioHealth": "fair"
-}
 
-Focus on gas optimization, staking opportunities, diversification, and risk assessment. Use categories: gas, staking, diversification, risk, general. Use priorities: low, medium, high. Use portfolio health: poor, fair, good, excellent.`;
-  }
-
-  private fallbackAnalysis(walletData: WalletData): AnalysisResult {
-    const { balance, assets, transactions } = walletData;
-    const advice: AIAdvice[] = [];
-
-    const avgGasUsed = transactions.length > 0 ? 
-      transactions.reduce((sum, tx) => sum + tx.gasUsed, 0) / transactions.length : 0;
-
-    if (avgGasUsed > 1000000) {
-      advice.push({
-        category: 'gas',
-        title: 'Optimize Gas Usage',
-        description: 'Your transactions are using high gas. Consider batching operations or using more efficient transaction patterns.',
-        actionable: true,
+    const advice: Array<{
+      title: string;
+      description: string;
+      priority: 'high' | 'medium' | 'low';
+    }> = [
+      {
+        title: 'Diversify Holdings',
+        description: 'Consider holding different types of assets to reduce risk.',
         priority: 'medium',
-        estimatedSavings: '0.01-0.05 SUI per transaction'
-      });
-    }
+      },
+      {
+        title: 'Monitor Gas Usage',
+        description: 'Review transaction patterns to optimize gas spending.',
+        priority: 'low',
+      },
+    ];
 
-    if (balance > 1 && balance < 100) {
-      advice.push({
-        category: 'staking',
-        title: 'Consider Staking SUI',
-        description: 'With your current SUI balance, staking could provide steady returns. Look into validator staking for approximately 3-7% APY.',
-        actionable: true,
+    if (failureRate > 0.2) {
+      advice.unshift({
+        title: 'Investigate Failed Transactions',
+        description: 'High failure rate detected. Review transaction parameters.',
         priority: 'high',
-        estimatedSavings: `${(balance * 0.05).toFixed(2)} SUI annually`
       });
     }
-
-    const suiAssets = assets.filter(asset => asset.symbol === 'SUI');
-    const otherAssets = assets.filter(asset => asset.symbol !== 'SUI');
-    
-    if (suiAssets.length > 0 && otherAssets.length === 0) {
-      advice.push({
-        category: 'diversification',
-        title: 'Diversify Your Portfolio',
-        description: 'Your portfolio is concentrated in SUI. Consider diversifying with other Sui ecosystem tokens or DeFi positions.',
-        actionable: true,
-        priority: 'medium'
-      });
-    }
-
-    const failedTxs = transactions.filter(tx => !tx.success).length;
-    const failureRate = transactions.length > 0 ? (failedTxs / transactions.length) * 100 : 0;
-
-    if (failureRate > 10) {
-      advice.push({
-        category: 'risk',
-        title: 'High Transaction Failure Rate',
-        description: `${failureRate.toFixed(1)}% of your transactions are failing. Review transaction parameters and gas settings.`,
-        actionable: true,
-        priority: 'high'
-      });
-    }
-
-    if (balance < 0.1) {
-      advice.push({
-        category: 'general',
-        title: 'Low SUI Balance',
-        description: 'Your SUI balance is low. Consider adding more SUI to cover transaction fees and participate in DeFi activities.',
-        actionable: true,
-        priority: 'medium'
-      });
-    }
-
-    let riskScore = 5;
-    if (balance < 1) riskScore += 2;
-    if (failureRate > 10) riskScore += 2;
-    if (otherAssets.length === 0) riskScore += 1;
-    
-    riskScore = Math.min(10, Math.max(1, riskScore));
-
-    const portfolioHealth: 'poor' | 'fair' | 'good' | 'excellent' = 
-      balance > 10 && failureRate < 5 && otherAssets.length > 0 ? 'excellent' :
-      balance > 5 && failureRate < 10 ? 'good' :
-      balance > 1 ? 'fair' : 'poor';
 
     return {
-      summary: `Portfolio contains ${balance.toFixed(2)} SUI across ${assets.length} assets with ${transactions.length} recent transactions.`,
-      advice,
+      summary: `Portfolio shows ${portfolioHealth} health with ${balance.toFixed(2)} SUI balance and ${transactionCount} recent transactions.`,
+      portfolioHealth,
       riskScore,
-      portfolioHealth
+      advice,
     };
   }
 }

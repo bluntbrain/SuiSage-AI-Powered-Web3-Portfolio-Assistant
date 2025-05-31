@@ -74,6 +74,24 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: "AI Chat",
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol size={focused ? 26 : 24} name="message" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: "Settings",
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol size={focused ? 26 : 24} name="gear" color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }
