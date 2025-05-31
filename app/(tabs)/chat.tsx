@@ -41,52 +41,29 @@ export default function ChatScreen() {
     [sessionId: string]: "openai" | "gemini";
   }>({});
 
-  useEffect(() => {
-    setAvailableProviders(aiService.getAvailableProviders());
+  // Suggested prompts for when chat is empty
+  const suggestedPrompts = [
+    "Analyze my wallet security",
+    "What are common DeFi risks?",
+    "How to secure my Sui wallet?",
+    "Check my transaction history",
+    "Explain staking risks",
+    "What is a smart contract audit?",
+  ];
 
-    // Add welcome message
-    const welcomeMessage: ChatMessage = {
-      id: "welcome",
-      text: walletData
-        ? `Hi! I'm your security-focused Web3 assistant. I can help you understand your Sui wallet, analyze transactions, and provide security recommendations. What would you like to know?`
-        : `Hi! I'm your Web3 security assistant. Connect a wallet on the Dashboard to get personalized insights, or ask me general questions about Sui blockchain security.`,
-      sender: "openai",
-      timestamp: Date.now(),
-    };
-
-    setMessages([welcomeMessage]);
-  }, [walletData]);
-
-  const handleVoiceToggle = () => {
-    if (!voiceService.isApiConfigured()) {
-      Alert.alert(
-        "Voice Mode Unavailable",
-        "UnrealSpeech API key is not configured. Please add EXPO_PUBLIC_UNREALSPEECH_API_KEY to your environment variables.",
-        [{ text: "OK", style: "default" }]
-      );
-      return;
-    }
-    toggleVoiceMode();
+  const handlePromptSelect = (prompt: string) => {
+    setInputText(prompt);
+    // Auto-send the prompt
+    setTimeout(() => {
+      handleSendMessageWithText(prompt);
+    }, 100);
   };
 
-  const playResponseAudio = async (text: string) => {
-    if (!voiceSettings.enabled || !voiceService.isApiConfigured()) {
-      return;
-    }
+  const handleSendMessageWithText = async (text: string) => {
+    if (!text.trim() || isLoading) return;
 
-    try {
-      setIsProcessingAudio(true);
-      await voiceService.convertAndPlay(text, voiceSettings.selectedVoice);
-    } catch (error) {
-      console.error("[Chat] Voice playback failed:", error);
-      // Don't show error to user - voice is optional feature
-    } finally {
-      setIsProcessingAudio(false);
-    }
-  };
-
-  const handleSendMessage = async () => {
-    if (!inputText.trim() || isLoading) return;
+    // Rest of the send message logic...
+    const messageText = text.trim();
 
     // In voice mode, only use OpenAI
     let effectiveProviderSettings = aiProviderSettings;
@@ -117,7 +94,7 @@ export default function ChatScreen() {
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
-      text: inputText.trim(),
+      text: messageText,
       sender: "user",
       timestamp: Date.now(),
     };
@@ -130,7 +107,7 @@ export default function ChatScreen() {
       newSession = {
         id: sessionId,
         timestamp: Date.now(),
-        question: inputText.trim(),
+        question: messageText,
         walletData: walletData,
         responses: {},
         selectedBetter: null,
@@ -158,7 +135,7 @@ export default function ChatScreen() {
 
     try {
       const aiResponses = await aiService.askMultipleAIs(
-        inputText.trim(),
+        messageText,
         walletData,
         effectiveProviderSettings
       );
@@ -214,6 +191,39 @@ export default function ChatScreen() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!inputText.trim() || isLoading) return;
+    await handleSendMessageWithText(inputText.trim());
+  };
+
+  const handleVoiceToggle = () => {
+    if (!voiceService.isApiConfigured()) {
+      Alert.alert(
+        "Voice Mode Unavailable",
+        "UnrealSpeech API key is not configured. Please add EXPO_PUBLIC_UNREALSPEECH_API_KEY to your environment variables.",
+        [{ text: "OK", style: "default" }]
+      );
+      return;
+    }
+    toggleVoiceMode();
+  };
+
+  const playResponseAudio = async (text: string) => {
+    if (!voiceSettings.enabled || !voiceService.isApiConfigured()) {
+      return;
+    }
+
+    try {
+      setIsProcessingAudio(true);
+      await voiceService.convertAndPlay(text, voiceSettings.selectedVoice);
+    } catch (error) {
+      console.error("[Chat] Voice playback failed:", error);
+      // Don't show error to user - voice is optional feature
+    } finally {
+      setIsProcessingAudio(false);
     }
   };
 
@@ -279,6 +289,22 @@ export default function ChatScreen() {
         return SuiColors.aqua;
     }
   };
+
+  useEffect(() => {
+    setAvailableProviders(aiService.getAvailableProviders());
+
+    // Add welcome message
+    const welcomeMessage: ChatMessage = {
+      id: "welcome",
+      text: walletData
+        ? `Hi! I'm your security-focused Web3 assistant. I can help you understand your Sui wallet, analyze transactions, and provide security recommendations. What would you like to know?`
+        : `Hi! I'm your Web3 security assistant. Connect a wallet on the Dashboard to get personalized insights, or ask me general questions about Sui blockchain security.`,
+      sender: "openai",
+      timestamp: Date.now(),
+    };
+
+    setMessages([welcomeMessage]);
+  }, [walletData]);
 
   return (
     <View style={styles.container}>
@@ -451,6 +477,34 @@ export default function ChatScreen() {
             </View>
           ))}
         </ScrollView>
+
+        {/* Suggested Prompts - Only show when chat is empty (only welcome message) */}
+        {messages.length <= 1 && (
+          <View style={styles.suggestedPromptsContainer}>
+            <ThemedText style={styles.suggestedPromptsTitle}>
+              Try asking about:
+            </ThemedText>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.suggestedPromptsScrollContent}
+              style={styles.suggestedPromptsScroll}
+            >
+              {suggestedPrompts.map((prompt, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.suggestedPromptButton}
+                  onPress={() => handlePromptSelect(prompt)}
+                  disabled={isLoading}
+                >
+                  <ThemedText style={styles.suggestedPromptText}>
+                    {prompt}
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Input */}
         <View
@@ -711,5 +765,46 @@ const styles = StyleSheet.create({
   },
   selectedText: {
     color: "white",
+  },
+  suggestedPromptsContainer: {
+    padding: 8,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(77, 162, 255, 0.1)",
+    backgroundColor: "rgba(1, 24, 41, 0.8)",
+  },
+  suggestedPromptsTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginBottom: 2,
+    paddingHorizontal: 16,
+  },
+  suggestedPromptsScrollContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  suggestedPromptsScroll: {
+    flexDirection: "row",
+  },
+  suggestedPromptButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "rgba(77, 162, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.25)",
+    borderRadius: 20,
+    marginRight: 8,
+    shadowColor: SuiColors.sea,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+    minWidth: 100,
+  },
+  suggestedPromptText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: SuiColors.aqua,
+    textAlign: "center",
   },
 });
