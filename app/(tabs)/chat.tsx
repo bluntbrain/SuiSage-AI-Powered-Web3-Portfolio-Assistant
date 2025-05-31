@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Alert,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,13 +21,16 @@ import {
   ComparisonSession,
 } from "@/services/trainingDataService";
 import { useWallet } from "@/contexts/WalletContext";
+import { voiceService } from "@/services/voiceService";
 
 export default function ChatScreen() {
-  const { walletData, aiProviderSettings } = useWallet();
+  const { walletData, aiProviderSettings, voiceSettings, toggleVoiceMode } =
+    useWallet();
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const [availableProviders, setAvailableProviders] = useState<AIProvider[]>(
     []
@@ -53,18 +57,57 @@ export default function ChatScreen() {
     setMessages([welcomeMessage]);
   }, [walletData]);
 
+  const handleVoiceToggle = () => {
+    if (!voiceService.isApiConfigured()) {
+      Alert.alert(
+        "Voice Mode Unavailable",
+        "UnrealSpeech API key is not configured. Please add EXPO_PUBLIC_UNREALSPEECH_API_KEY to your environment variables.",
+        [{ text: "OK", style: "default" }]
+      );
+      return;
+    }
+    toggleVoiceMode();
+  };
+
+  const playResponseAudio = async (text: string) => {
+    if (!voiceSettings.enabled || !voiceService.isApiConfigured()) {
+      return;
+    }
+
+    try {
+      setIsProcessingAudio(true);
+      await voiceService.convertAndPlay(text, voiceSettings.selectedVoice);
+    } catch (error) {
+      console.error("[Chat] Voice playback failed:", error);
+      // Don't show error to user - voice is optional feature
+    } finally {
+      setIsProcessingAudio(false);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!inputText.trim() || isLoading) return;
 
+    // In voice mode, only use OpenAI
+    let effectiveProviderSettings = aiProviderSettings;
+    if (voiceSettings.enabled) {
+      effectiveProviderSettings = {
+        openai: true,
+        gemini: false,
+      };
+    }
+
     // Check if any providers are enabled
     const enabledProviders = availableProviders.filter(
-      (provider) => provider.enabled && aiProviderSettings[provider.id]
+      (provider) => provider.enabled && effectiveProviderSettings[provider.id]
     );
 
     if (enabledProviders.length === 0) {
       const errorMessage: ChatMessage = {
         id: `no-providers-${Date.now()}`,
-        text: "No AI assistants are currently enabled. Please enable at least one AI provider in Settings.",
+        text: voiceSettings.enabled
+          ? "Voice mode requires OpenAI to be available. Please check your API configuration."
+          : "No AI assistants are currently enabled. Please enable at least one AI provider in Settings.",
         sender: "openai",
         timestamp: Date.now(),
       };
@@ -79,17 +122,21 @@ export default function ChatScreen() {
       timestamp: Date.now(),
     };
 
-    // Create comparison session for training data
+    // Create comparison session for training data (only if not in voice mode)
     const sessionId = `session-${Date.now()}`;
-    const newSession: ComparisonSession = {
-      id: sessionId,
-      timestamp: Date.now(),
-      question: inputText.trim(),
-      walletData: walletData,
-      responses: {},
-      selectedBetter: null,
-    };
-    setCurrentSession(newSession);
+    let newSession: ComparisonSession | null = null;
+
+    if (!voiceSettings.enabled) {
+      newSession = {
+        id: sessionId,
+        timestamp: Date.now(),
+        question: inputText.trim(),
+        walletData: walletData,
+        responses: {},
+        selectedBetter: null,
+      };
+      setCurrentSession(newSession);
+    }
 
     setMessages((prev) => [...prev, userMessage]);
     setInputText("");
@@ -98,7 +145,9 @@ export default function ChatScreen() {
     // Add loading indicators for enabled AI providers only
     const loadingMessages: ChatMessage[] = enabledProviders.map((provider) => ({
       id: `${provider.id}-loading-${Date.now()}`,
-      text: "Thinking...",
+      text: voiceSettings.enabled
+        ? "🎤 Generating voice response..."
+        : "Thinking...",
       sender: provider.id,
       timestamp: Date.now(),
       isLoading: true,
@@ -111,7 +160,7 @@ export default function ChatScreen() {
       const aiResponses = await aiService.askMultipleAIs(
         inputText.trim(),
         walletData,
-        aiProviderSettings
+        effectiveProviderSettings
       );
 
       // Add session ID to responses and update session data
@@ -120,22 +169,35 @@ export default function ChatScreen() {
         sessionId: sessionId,
       }));
 
-      // Update session with actual responses
-      const updatedSession = { ...newSession };
-      responsesWithSession.forEach((response) => {
-        if (response.sender === "openai") {
-          updatedSession.responses.openai = response.text;
-        } else if (response.sender === "gemini") {
-          updatedSession.responses.gemini = response.text;
-        }
-      });
-      setCurrentSession(updatedSession);
+      // Update session with actual responses (only if not in voice mode)
+      if (newSession) {
+        const updatedSession = { ...newSession };
+        responsesWithSession.forEach((response) => {
+          if (response.sender === "openai") {
+            updatedSession.responses.openai = response.text;
+          } else if (response.sender === "gemini") {
+            updatedSession.responses.gemini = response.text;
+          }
+        });
+        setCurrentSession(updatedSession);
+      }
 
       // Remove loading messages and add real responses
       setMessages((prev) => {
         const withoutLoading = prev.filter((msg) => !msg.isLoading);
         return [...withoutLoading, ...responsesWithSession];
       });
+
+      // Auto-play voice response if voice mode is enabled
+      if (voiceSettings.enabled && responsesWithSession.length > 0) {
+        // Play the first (and only) OpenAI response
+        const openaiResponse = responsesWithSession.find(
+          (r) => r.sender === "openai"
+        );
+        if (openaiResponse) {
+          await playResponseAudio(openaiResponse.text);
+        }
+      }
     } catch (error) {
       const errorMessage: ChatMessage = {
         id: `error-${Date.now()}`,
@@ -237,15 +299,39 @@ export default function ChatScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <ThemedText style={styles.headerTitle}>AI Chat</ThemedText>
-          <ThemedText style={styles.headerSubtitle}>
-            {
-              availableProviders.filter(
-                (p) => p.enabled && aiProviderSettings[p.id]
-              ).length
-            }{" "}
-            AI assistants ready to help
-          </ThemedText>
+          <View style={styles.headerContent}>
+            <View style={styles.headerLeft}>
+              <ThemedText style={styles.headerTitle}>
+                {voiceSettings.enabled ? "🎤 Voice Chat" : "AI Chat"}
+              </ThemedText>
+              <ThemedText style={styles.headerSubtitle}>
+                {voiceSettings.enabled
+                  ? `Voice mode - ${voiceSettings.selectedVoice}`
+                  : `${
+                      availableProviders.filter(
+                        (p) => p.enabled && aiProviderSettings[p.id]
+                      ).length
+                    } AI assistants ready to help`}
+              </ThemedText>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.voiceToggle,
+                voiceSettings.enabled && styles.voiceToggleActive,
+                !voiceService.isApiConfigured() && styles.voiceToggleDisabled,
+              ]}
+              onPress={handleVoiceToggle}
+            >
+              <IconSymbol
+                name={voiceSettings.enabled ? "mic.fill" : "mic"}
+                size={20}
+                color={
+                  voiceSettings.enabled ? "white" : "rgba(192, 230, 255, 0.7)"
+                }
+              />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Messages */}
@@ -276,6 +362,21 @@ export default function ChatScreen() {
                   <ThemedText style={styles.aiName}>
                     {getSenderName(message.sender)}
                   </ThemedText>
+                  {voiceSettings.enabled &&
+                    message.sender === "openai" &&
+                    !message.isLoading && (
+                      <View style={styles.voiceIndicator}>
+                        <IconSymbol
+                          name={
+                            isProcessingAudio
+                              ? "speaker.wave.3.fill"
+                              : "speaker.2.fill"
+                          }
+                          size={12}
+                          color="rgba(192, 230, 255, 0.6)"
+                        />
+                      </View>
+                    )}
                 </View>
               )}
 
@@ -298,8 +399,9 @@ export default function ChatScreen() {
                   {message.text}
                 </ThemedText>
 
-                {/* Selection buttons for AI responses */}
-                {message.sender !== "user" &&
+                {/* Selection buttons for AI responses (only shown when NOT in voice mode) */}
+                {!voiceSettings.enabled &&
+                  message.sender !== "user" &&
                   !message.isLoading &&
                   message.sessionId &&
                   // Only show selection buttons when there are multiple AI responses in this session
@@ -360,7 +462,11 @@ export default function ChatScreen() {
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.textInput}
-              placeholder="Ask about Sui & DeFi security..."
+              placeholder={
+                voiceSettings.enabled
+                  ? "Type your message (voice response will play)..."
+                  : "Ask about Sui & DeFi security..."
+              }
               placeholderTextColor="rgba(192, 230, 255, 0.5)"
               value={inputText}
               onChangeText={setInputText}
@@ -426,6 +532,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "rgba(77, 162, 255, 0.1)",
   },
+  headerContent: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  headerLeft: {
+    flex: 1,
+  },
   headerTitle: {
     fontSize: 24,
     fontWeight: "bold",
@@ -435,6 +549,24 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 14,
     color: "rgba(192, 230, 255, 0.7)",
+  },
+  voiceToggle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(77, 162, 255, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 12,
+  },
+  voiceToggleActive: {
+    backgroundColor: SuiColors.sea,
+    borderColor: SuiColors.sea,
+  },
+  voiceToggleDisabled: {
+    opacity: 0.5,
   },
   messagesContainer: {
     flex: 1,
@@ -467,6 +599,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     color: "rgba(192, 230, 255, 0.8)",
+  },
+  voiceIndicator: {
+    marginLeft: 8,
   },
   messageBubble: {
     maxWidth: "85%",

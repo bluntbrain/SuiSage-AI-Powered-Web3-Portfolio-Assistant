@@ -7,6 +7,7 @@ import {
   StatusBar,
   Alert,
   TouchableOpacity,
+  Modal,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,10 +19,17 @@ import { SuiColors } from "@/constants/Colors";
 import { useWallet } from "@/contexts/WalletContext";
 import { aiService } from "@/services/aiService";
 import { trainingDataService } from "@/services/trainingDataService";
+import { voiceService, AVAILABLE_VOICES } from "@/services/voiceService";
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { aiProviderSettings, toggleAIProvider } = useWallet();
+  const {
+    aiProviderSettings,
+    toggleAIProvider,
+    voiceSettings,
+    setVoiceSettings,
+    updateSelectedVoice,
+  } = useWallet();
   const availableProviders = aiService.getAvailableProviders();
   const [trainingStats, setTrainingStats] = useState({
     total: 0,
@@ -29,6 +37,7 @@ export default function SettingsScreen() {
     openaiWins: 0,
     geminiWins: 0,
   });
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
 
   useEffect(() => {
     loadTrainingStats();
@@ -37,6 +46,44 @@ export default function SettingsScreen() {
   const loadTrainingStats = async () => {
     const stats = await trainingDataService.getStats();
     setTrainingStats(stats);
+  };
+
+  const handleVoiceToggle = () => {
+    if (!voiceService.isApiConfigured()) {
+      Alert.alert(
+        "Voice Mode Unavailable",
+        "UnrealSpeech API key is not configured. Please add EXPO_PUBLIC_UNREALSPEECH_API_KEY to your environment variables.",
+        [{ text: "OK", style: "default" }]
+      );
+      return;
+    }
+
+    setVoiceSettings({
+      ...voiceSettings,
+      enabled: !voiceSettings.enabled,
+    });
+  };
+
+  const handleVoiceSelection = (voice: string) => {
+    updateSelectedVoice(voice);
+    setShowVoiceModal(false);
+  };
+
+  // Get all available voices - fallback to direct import if service fails
+  const getAllAvailableVoices = () => {
+    try {
+      const voices = voiceService.getAllVoices();
+      return voices.length > 0 ? voices : getFallbackVoices();
+    } catch (error) {
+      return getFallbackVoices();
+    }
+  };
+
+  const getFallbackVoices = () => {
+    return Object.entries(AVAILABLE_VOICES).map(([category, voices]) => ({
+      category,
+      voices,
+    }));
   };
 
   const exportTrainingData = async () => {
@@ -113,7 +160,7 @@ export default function SettingsScreen() {
         <View style={styles.header}>
           <ThemedText style={styles.headerTitle}>Settings</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            Configure your AI assistants
+            Configure your AI assistants and voice settings
           </ThemedText>
         </View>
 
@@ -218,6 +265,112 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* Voice Settings Section */}
+        <View style={styles.section}>
+          <ThemedText style={styles.sectionTitle}>🎤 Voice Mode</ThemedText>
+          <ThemedText style={styles.sectionDescription}>
+            Convert AI responses to speech using natural voices. Voice mode uses
+            only OpenAI for responses.
+          </ThemedText>
+
+          {/* Voice Mode Toggle */}
+          <View style={styles.providerCard}>
+            <View style={styles.providerInfo}>
+              <View style={styles.providerHeader}>
+                <View
+                  style={[
+                    styles.providerIndicator,
+                    {
+                      backgroundColor: voiceSettings.enabled
+                        ? "#10B981"
+                        : "#6B7280",
+                    },
+                  ]}
+                />
+                <ThemedText style={styles.providerName}>Voice Mode</ThemedText>
+              </View>
+              <ThemedText style={styles.providerDescription}>
+                AI responses will be converted to speech and auto-played
+              </ThemedText>
+              {!voiceService.isApiConfigured() && (
+                <ThemedText style={styles.unavailableText}>
+                  UnrealSpeech API key not configured
+                </ThemedText>
+              )}
+            </View>
+            <Switch
+              value={voiceSettings.enabled}
+              onValueChange={handleVoiceToggle}
+              disabled={!voiceService.isApiConfigured()}
+              trackColor={{
+                false: "rgba(77, 162, 255, 0.2)",
+                true: SuiColors.sea,
+              }}
+              thumbColor={voiceSettings.enabled ? "white" : "#f4f3f4"}
+            />
+          </View>
+
+          {/* Voice Selection - Always show, but indicate when API not configured */}
+          <TouchableOpacity
+            style={[
+              styles.voiceSelector,
+              !voiceService.isApiConfigured() && styles.voiceSelectorDisabled,
+            ]}
+            onPress={() => setShowVoiceModal(true)}
+          >
+            <View style={styles.voiceSelectorContent}>
+              <View style={styles.voiceSelectorLeft}>
+                <IconSymbol
+                  name="speaker.2.fill"
+                  size={20}
+                  color={
+                    voiceService.isApiConfigured()
+                      ? SuiColors.aqua
+                      : "rgba(192, 230, 255, 0.4)"
+                  }
+                />
+                <View style={styles.voiceSelectorText}>
+                  <ThemedText
+                    style={[
+                      styles.voiceSelectorTitle,
+                      !voiceService.isApiConfigured() && styles.disabledText,
+                    ]}
+                  >
+                    Voice Selection
+                  </ThemedText>
+                  <ThemedText
+                    style={[
+                      styles.voiceSelectorSubtitle,
+                      !voiceService.isApiConfigured() && styles.disabledText,
+                    ]}
+                  >
+                    {voiceService.isApiConfigured()
+                      ? `Current: ${voiceSettings.selectedVoice}`
+                      : "API key required to use voices"}
+                  </ThemedText>
+                </View>
+              </View>
+              <IconSymbol
+                name="chevron.right"
+                size={16}
+                color={
+                  voiceService.isApiConfigured()
+                    ? "rgba(192, 230, 255, 0.6)"
+                    : "rgba(192, 230, 255, 0.3)"
+                }
+              />
+            </View>
+          </TouchableOpacity>
+
+          {/* Voice Info Note */}
+          <View style={styles.infoNote}>
+            <ThemedText style={styles.infoText}>
+              🎙️ Voice mode automatically uses only OpenAI for faster
+              processing. Premium voices from UnrealSpeech API.
+            </ThemedText>
+          </View>
+        </View>
+
         {/* Training Data Section */}
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Training Data</ThemedText>
@@ -308,6 +461,89 @@ export default function SettingsScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Voice Selection Modal */}
+      <Modal
+        visible={showVoiceModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowVoiceModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Select Voice</ThemedText>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => setShowVoiceModal(false)}
+              >
+                <IconSymbol name="xmark" size={20} color={SuiColors.aqua} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalScrollView}>
+              {!voiceService.isApiConfigured() && (
+                <View style={styles.modalWarning}>
+                  <IconSymbol
+                    name="exclamationmark.triangle"
+                    size={20}
+                    color="#F59E0B"
+                  />
+                  <ThemedText style={styles.modalWarningText}>
+                    UnrealSpeech API key not configured. Voices are shown for
+                    preview only.
+                  </ThemedText>
+                </View>
+              )}
+
+              {getAllAvailableVoices().map(({ category, voices }) => (
+                <View key={category} style={styles.voiceCategory}>
+                  <ThemedText style={styles.voiceCategoryTitle}>
+                    {category}
+                  </ThemedText>
+                  {voices.map((voice) => (
+                    <TouchableOpacity
+                      key={voice}
+                      style={[
+                        styles.voiceOption,
+                        voiceSettings.selectedVoice === voice &&
+                          styles.selectedVoiceOption,
+                        !voiceService.isApiConfigured() &&
+                          styles.voiceOptionDisabled,
+                      ]}
+                      onPress={() => handleVoiceSelection(voice)}
+                      disabled={!voiceService.isApiConfigured()}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.voiceOptionText,
+                          voiceSettings.selectedVoice === voice &&
+                            styles.selectedVoiceText,
+                          !voiceService.isApiConfigured() &&
+                            styles.disabledText,
+                        ]}
+                      >
+                        {voice}
+                      </ThemedText>
+                      {voiceSettings.selectedVoice === voice && (
+                        <IconSymbol
+                          name="checkmark"
+                          size={16}
+                          color={
+                            voiceService.isApiConfigured()
+                              ? "white"
+                              : "rgba(255, 255, 255, 0.4)"
+                          }
+                        />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -428,6 +664,134 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "rgba(192, 230, 255, 0.8)",
     lineHeight: 18,
+  },
+  voiceSelector: {
+    backgroundColor: "rgba(77, 162, 255, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  voiceSelectorDisabled: {
+    opacity: 0.6,
+  },
+  voiceSelectorContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  voiceSelectorLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  voiceSelectorText: {
+    marginLeft: 12,
+  },
+  voiceSelectorTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginBottom: 2,
+  },
+  voiceSelectorSubtitle: {
+    fontSize: 13,
+    color: "rgba(192, 230, 255, 0.7)",
+  },
+  disabledText: {
+    color: "rgba(192, 230, 255, 0.4)",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    backgroundColor: SuiColors.deepOcean,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "80%",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(77, 162, 255, 0.1)",
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(77, 162, 255, 0.1)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalScrollView: {
+    flex: 1,
+  },
+  modalWarning: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.2)",
+    borderRadius: 8,
+    padding: 12,
+    margin: 20,
+    marginBottom: 10,
+  },
+  modalWarningText: {
+    fontSize: 13,
+    color: "#F59E0B",
+    marginLeft: 8,
+    flex: 1,
+    lineHeight: 18,
+  },
+  voiceCategory: {
+    padding: 20,
+    paddingTop: 16,
+  },
+  voiceCategoryTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginBottom: 12,
+  },
+  voiceOption: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 12,
+    backgroundColor: "rgba(77, 162, 255, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  selectedVoiceOption: {
+    backgroundColor: SuiColors.sea,
+    borderColor: SuiColors.sea,
+  },
+  voiceOptionDisabled: {
+    opacity: 0.5,
+  },
+  voiceOptionText: {
+    fontSize: 15,
+    color: SuiColors.aqua,
+  },
+  selectedVoiceText: {
+    color: "white",
+    fontWeight: "600",
   },
   apiCard: {
     backgroundColor: "rgba(77, 162, 255, 0.05)",

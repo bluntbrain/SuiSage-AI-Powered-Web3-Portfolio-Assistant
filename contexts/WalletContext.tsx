@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
 import { WalletData } from "@/services/suiService";
+import { VoiceSettings, voiceService } from "@/services/voiceService";
 
 interface AIProviderSettings {
   openai: boolean;
@@ -14,6 +15,10 @@ interface WalletContextType {
   aiProviderSettings: AIProviderSettings;
   setAIProviderSettings: (settings: AIProviderSettings) => void;
   toggleAIProvider: (provider: keyof AIProviderSettings) => void;
+  voiceSettings: VoiceSettings;
+  setVoiceSettings: (settings: VoiceSettings) => void;
+  toggleVoiceMode: () => void;
+  updateSelectedVoice: (voice: string) => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -38,6 +43,10 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       openai: true,
       gemini: true,
     });
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({
+    enabled: false,
+    selectedVoice: voiceService.getDefaultVoice(),
+  });
 
   const toggleAIProvider = (provider: keyof AIProviderSettings) => {
     setAIProviderSettings((prevSettings) => {
@@ -56,6 +65,20 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     });
   };
 
+  const toggleVoiceMode = () => {
+    setVoiceSettings((prevSettings) => ({
+      ...prevSettings,
+      enabled: !prevSettings.enabled,
+    }));
+  };
+
+  const updateSelectedVoice = (voice: string) => {
+    setVoiceSettings((prevSettings) => ({
+      ...prevSettings,
+      selectedVoice: voice,
+    }));
+  };
+
   return (
     <WalletContext.Provider
       value={{
@@ -66,6 +89,10 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         aiProviderSettings,
         setAIProviderSettings,
         toggleAIProvider,
+        voiceSettings,
+        setVoiceSettings,
+        toggleVoiceMode,
+        updateSelectedVoice,
       }}
     >
       {children}
