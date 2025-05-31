@@ -17,12 +17,13 @@ import { NetworkDropdown } from "@/components/NetworkDropdown";
 import { SuiColors } from "@/constants/Colors";
 import { suiService } from "@/services/suiService";
 import { aiService, AnalysisResult } from "@/services/aiService";
+import { coingeckoService } from "@/services/coingeckoService";
 import { useWallet } from "@/contexts/WalletContext";
 import { useRouter } from "expo-router";
 
 export default function HomeScreen() {
   const [walletAddress, setWalletAddress] = useState("");
-  const { walletData, setWalletData } = useWallet();
+  const { walletData, setWalletData, suiPrice, setSuiPrice } = useWallet();
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -63,8 +64,14 @@ export default function HomeScreen() {
 
     setLoading(true);
     try {
-      const data = await suiService.getWalletData(walletAddress);
+      // Fetch wallet data and SUI price in parallel
+      const [data, price] = await Promise.all([
+        suiService.getWalletData(walletAddress),
+        coingeckoService.getSuiPrice(),
+      ]);
+
       setWalletData(data);
+      setSuiPrice(price);
 
       // Start AI analysis
       setAnalysisLoading(true);
@@ -281,20 +288,16 @@ export default function HomeScreen() {
               <ThemedText style={styles.balanceValue}>
                 {walletData.balance.toFixed(4)} SUI
               </ThemedText>
-            </View>
-            <View style={styles.statsGrid}>
-              <View style={styles.statCard}>
-                <ThemedText style={styles.statNumber}>
-                  {walletData.assets.length}
+              {suiPrice && (
+                <ThemedText style={styles.balanceUsd}>
+                  {coingeckoService.formatUsdValue(
+                    coingeckoService.convertSuiToUsd(
+                      walletData.balance,
+                      suiPrice
+                    )
+                  )}
                 </ThemedText>
-                <ThemedText style={styles.statLabel}>Assets</ThemedText>
-              </View>
-              <View style={styles.statCard}>
-                <ThemedText style={styles.statNumber}>
-                  {walletData.transactions.length}
-                </ThemedText>
-                <ThemedText style={styles.statLabel}>Recent Txs</ThemedText>
-              </View>
+              )}
             </View>
           </View>
         )}
@@ -605,7 +608,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   portfolioSection: {
-    marginBottom: 30,
+    marginBottom: 2,
   },
   balanceDisplay: {
     alignItems: "center",
@@ -624,6 +627,11 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: SuiColors.sea,
     lineHeight: 32,
+  },
+  balanceUsd: {
+    fontSize: 14,
+    color: "rgba(192, 230, 255, 0.8)",
+    marginTop: 4,
   },
   statsGrid: {
     flexDirection: "row",

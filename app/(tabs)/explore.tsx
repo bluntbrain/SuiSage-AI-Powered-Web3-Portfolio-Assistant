@@ -12,10 +12,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import { ThemedText } from "@/components/ThemedText";
 import { SuiColors } from "@/constants/Colors";
 import { Transaction } from "@/services/suiService";
+import { coingeckoService } from "@/services/coingeckoService";
 import { useWallet } from "@/contexts/WalletContext";
 
 export default function TransactionHistoryScreen() {
-  const { walletData } = useWallet();
+  const { walletData, suiPrice } = useWallet();
   const transactions = walletData?.transactions || [];
 
   const formatDate = (timestamp: number | string) => {
@@ -138,12 +139,24 @@ export default function TransactionHistoryScreen() {
             </ThemedText>
             <ThemedText style={styles.mainSubtitle}>
               {walletData?.address
-                ? `for ${walletData.address.slice(
+                ? `${walletData.address.slice(
                     0,
                     8
                   )}...${walletData.address.slice(-8)}`
                 : "Recent blockchain activities"}
             </ThemedText>
+            {walletData && (
+              <ThemedText style={styles.balanceInfo}>
+                Balance: {walletData.balance.toFixed(4)} SUI
+                {suiPrice &&
+                  ` (${coingeckoService.formatUsdValue(
+                    coingeckoService.convertSuiToUsd(
+                      walletData.balance,
+                      suiPrice
+                    )
+                  )})`}
+              </ThemedText>
+            )}
           </View>
         </View>
 
@@ -339,6 +352,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "rgba(192, 230, 255, 0.8)",
     textAlign: "left",
+  },
+  balanceInfo: {
+    fontSize: 14,
+    color: "rgba(192, 230, 255, 0.7)",
+    textAlign: "left",
+    marginTop: 4,
   },
   transactionsSection: {
     marginBottom: 20,

@@ -4,6 +4,8 @@ import { WalletData } from "@/services/suiService";
 interface WalletContextType {
   walletData: WalletData | null;
   setWalletData: (data: WalletData | null) => void;
+  suiPrice: number | null;
+  setSuiPrice: (price: number | null) => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -22,9 +24,12 @@ interface WalletProviderProps {
 
 export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   const [walletData, setWalletData] = useState<WalletData | null>(null);
+  const [suiPrice, setSuiPrice] = useState<number | null>(null);
 
   return (
-    <WalletContext.Provider value={{ walletData, setWalletData }}>
+    <WalletContext.Provider
+      value={{ walletData, setWalletData, suiPrice, setSuiPrice }}
+    >
       {children}
     </WalletContext.Provider>
   );
