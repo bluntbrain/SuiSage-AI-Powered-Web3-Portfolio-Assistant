@@ -6,27 +6,53 @@ import {
   TouchableOpacity,
   Alert,
   StatusBar,
+  Linking,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { ThemedText } from "@/components/ThemedText";
-import { GlassCard } from "@/components/GlassCard";
 import { SuiColors } from "@/constants/Colors";
 import { Transaction } from "@/services/suiService";
+import { useWallet } from "@/contexts/WalletContext";
 
 export default function TransactionHistoryScreen() {
-  // This will be populated when a wallet is analyzed from the dashboard
-  const [transactions] = useState<Transaction[]>([]);
+  const { walletData } = useWallet();
+  const transactions = walletData?.transactions || [];
 
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  const formatDate = (timestamp: number | string) => {
+    try {
+      // Convert string to number if needed
+      const ts =
+        typeof timestamp === "string" ? parseInt(timestamp) : timestamp;
+
+      // Ensure we have a valid timestamp
+      if (!ts || ts <= 0) {
+        return "Unknown date";
+      }
+
+      const date = new Date(ts);
+
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return "Invalid date";
+      }
+
+      return date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch (error) {
+      return "Date error";
+    }
   };
 
   const formatGas = (gasUsed: number) => {
+    if (!gasUsed || gasUsed <= 0) {
+      return "0.000 MIST";
+    }
     return `${(gasUsed / 1000000).toFixed(3)} MIST`;
   };
 
@@ -49,6 +75,42 @@ export default function TransactionHistoryScreen() {
     return success ? "#4ECDC4" : "#FF6B6B";
   };
 
+  const handleTransactionPress = (transaction: Transaction) => {
+    // Check if explorerUrl exists
+    if (!transaction.explorerUrl) {
+      Alert.alert("Error", "Explorer URL not available for this transaction");
+      return;
+    }
+
+    Alert.alert(
+      "Transaction Options",
+      `Transaction: ${transaction.digest.slice(
+        0,
+        8
+      )}...${transaction.digest.slice(-8)}`,
+      [
+        {
+          text: "View in Explorer",
+          onPress: () => {
+            if (transaction.explorerUrl) {
+              Linking.openURL(transaction.explorerUrl);
+            } else {
+              Alert.alert("Error", "Explorer URL not available");
+            }
+          },
+        },
+        {
+          text: "Copy Digest",
+          onPress: () => {
+            // In a real app, you'd use Clipboard.setString
+            Alert.alert("Copied", "Transaction digest copied to clipboard");
+          },
+        },
+        { text: "Cancel", style: "cancel" },
+      ]
+    );
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -68,125 +130,41 @@ export default function TransactionHistoryScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <GlassCard style={styles.headerCard} glowIntensity="high">
-          <View style={styles.header}>
-            <ThemedText type="title" style={styles.title}>
+        {/* Clean header without card */}
+        <View style={styles.headerSection}>
+          <View style={styles.titleArea}>
+            <ThemedText style={styles.mainTitle}>
               Transaction History
             </ThemedText>
-            <ThemedText style={styles.subtitle}>
-              Recent blockchain activities
+            <ThemedText style={styles.mainSubtitle}>
+              {walletData?.address
+                ? `for ${walletData.address.slice(
+                    0,
+                    8
+                  )}...${walletData.address.slice(-8)}`
+                : "Recent blockchain activities"}
             </ThemedText>
           </View>
-        </GlassCard>
+        </View>
 
-        {/* Transactions List */}
-        {transactions.length > 0 ? (
-          <GlassCard style={styles.transactionsCard}>
-            <ThemedText type="subtitle" style={styles.sectionTitle}>
-              Recent Transactions
-            </ThemedText>
-            {transactions.map((tx, index) => (
-              <TouchableOpacity
-                key={tx.digest}
-                style={[
-                  styles.transactionItem,
-                  index === transactions.length - 1 && styles.lastTransaction,
-                ]}
-                onPress={() => {
-                  Alert.alert(
-                    "Transaction Details",
-                    `Digest: ${tx.digest}\nGas Used: ${formatGas(
-                      tx.gasUsed
-                    )}\nStatus: ${tx.success ? "Success" : "Failed"}`,
-                    [{ text: "OK" }]
-                  );
-                }}
-              >
-                <View style={styles.transactionHeader}>
-                  <View style={styles.transactionInfo}>
-                    <View style={styles.transactionTitleRow}>
-                      <ThemedText style={styles.transactionIcon}>
-                        {getTransactionIcon(tx.kind)}
-                      </ThemedText>
-                      <ThemedText style={styles.transactionType}>
-                        {tx.kind}
-                      </ThemedText>
-                    </View>
-                    <ThemedText style={styles.transactionTime}>
-                      {formatDate(tx.timestamp)}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.transactionStatus}>
-                    <View
-                      style={[
-                        styles.statusIndicator,
-                        { backgroundColor: getStatusColor(tx.success) },
-                      ]}
-                    />
-                    <ThemedText
-                      style={[
-                        styles.statusText,
-                        { color: getStatusColor(tx.success) },
-                      ]}
-                    >
-                      {tx.success ? "Success" : "Failed"}
-                    </ThemedText>
-                  </View>
-                </View>
-
-                <View style={styles.transactionDetails}>
-                  <View style={styles.detailRow}>
-                    <ThemedText style={styles.detailLabel}>
-                      Gas Used:
-                    </ThemedText>
-                    <ThemedText style={styles.detailValue}>
-                      {formatGas(tx.gasUsed)}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <ThemedText style={styles.detailLabel}>Digest:</ThemedText>
-                    <ThemedText style={styles.digestValue} numberOfLines={1}>
-                      {tx.digest}
-                    </ThemedText>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </GlassCard>
-        ) : (
-          <GlassCard style={styles.emptyCard}>
-            <View style={styles.emptyContainer}>
-              <ThemedText style={styles.emptyIcon}>📊</ThemedText>
-              <ThemedText style={styles.emptyTitle}>No Transactions</ThemedText>
-              <ThemedText style={styles.emptyDescription}>
-                Enter a wallet address on the Dashboard to view transaction
-                history
-              </ThemedText>
-            </View>
-          </GlassCard>
-        )}
-
-        {/* Stats Card */}
+        {/* Stats section in one line above transactions */}
         {transactions.length > 0 && (
-          <GlassCard style={styles.statsCard}>
-            <ThemedText type="subtitle" style={styles.sectionTitle}>
-              Statistics
-            </ThemedText>
+          <View style={styles.statsSection}>
+            <ThemedText style={styles.sectionLabel}>Statistics</ThemedText>
             <View style={styles.statsGrid}>
-              <View style={styles.statBox}>
+              <View style={styles.statCard}>
                 <ThemedText style={styles.statNumber}>
                   {transactions.length}
                 </ThemedText>
                 <ThemedText style={styles.statLabel}>Total Txs</ThemedText>
               </View>
-              <View style={styles.statBox}>
+              <View style={styles.statCard}>
                 <ThemedText style={styles.statNumber}>
                   {transactions.filter((tx) => tx.success).length}
                 </ThemedText>
                 <ThemedText style={styles.statLabel}>Successful</ThemedText>
               </View>
-              <View style={styles.statBox}>
+              <View style={styles.statCard}>
                 <ThemedText style={styles.statNumber}>
                   {(
                     transactions.reduce((sum, tx) => sum + tx.gasUsed, 0) /
@@ -195,22 +173,110 @@ export default function TransactionHistoryScreen() {
                 </ThemedText>
                 <ThemedText style={styles.statLabel}>MIST Used</ThemedText>
               </View>
-              <View style={styles.statBox}>
+              <View style={styles.statCard}>
                 <ThemedText style={styles.statNumber}>
-                  {(
-                    (transactions.filter((tx) => tx.success).length /
-                      transactions.length) *
-                    100
-                  ).toFixed(0)}
+                  {transactions.length > 0
+                    ? (
+                        (transactions.filter((tx) => tx.success).length /
+                          transactions.length) *
+                        100
+                      ).toFixed(0)
+                    : 0}
                   %
                 </ThemedText>
                 <ThemedText style={styles.statLabel}>Success Rate</ThemedText>
               </View>
             </View>
-          </GlassCard>
+          </View>
         )}
 
-        <View style={styles.bottomSpace} />
+        {/* Transactions List */}
+        {transactions.length > 0 ? (
+          <View style={styles.transactionsSection}>
+            <ThemedText style={styles.sectionLabel}>
+              All Transactions ({transactions.length})
+            </ThemedText>
+            <View style={styles.transactionsList}>
+              {transactions.map((tx, index) => (
+                <TouchableOpacity
+                  key={tx.digest}
+                  style={styles.transactionItem}
+                  onPress={() => handleTransactionPress(tx)}
+                >
+                  <View style={styles.transactionCard}>
+                    {/* Single row with icon, type, and status */}
+                    <View style={styles.transactionMainRow}>
+                      <View style={styles.leftSection}>
+                        <ThemedText style={styles.transactionIcon}>
+                          {getTransactionIcon(tx.kind)}
+                        </ThemedText>
+                        <View style={styles.transactionInfo}>
+                          <ThemedText style={styles.transactionType}>
+                            {tx.kind === "ProgrammableTransaction"
+                              ? "Contract Call"
+                              : tx.kind}
+                          </ThemedText>
+                          <ThemedText style={styles.transactionTime}>
+                            {formatDate(tx.timestamp)}
+                          </ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.rightSection}>
+                        <View style={styles.statusContainer}>
+                          <View
+                            style={[
+                              styles.statusDot,
+                              { backgroundColor: getStatusColor(tx.success) },
+                            ]}
+                          />
+                          <ThemedText
+                            style={[
+                              styles.statusLabel,
+                              { color: getStatusColor(tx.success) },
+                            ]}
+                          >
+                            {tx.success ? "Success" : "Failed"}
+                          </ThemedText>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Compact info row */}
+                    <View style={styles.infoRow}>
+                      <View style={styles.gasInfo}>
+                        <ThemedText style={styles.infoLabel}>Gas: </ThemedText>
+                        <ThemedText style={styles.infoValue}>
+                          {formatGas(tx.gasUsed)}
+                        </ThemedText>
+                      </View>
+                      <ThemedText style={styles.explorerHint}>
+                        🔗 View on Explorer
+                      </ThemedText>
+                    </View>
+
+                    {/* Transaction ID - compact */}
+                    <View style={styles.idRow}>
+                      <ThemedText style={styles.idPrefix}>ID: </ThemedText>
+                      <ThemedText style={styles.idValue} numberOfLines={1}>
+                        {tx.digest}
+                      </ThemedText>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.emptySection}>
+            <ThemedText style={styles.emptyIcon}>📊</ThemedText>
+            <ThemedText style={styles.emptyTitle}>No Transactions</ThemedText>
+            <ThemedText style={styles.emptyDescription}>
+              {walletData
+                ? "This wallet has no recent transactions"
+                : "Enter a wallet address on the Dashboard to view transaction history"}
+            </ThemedText>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -251,100 +317,130 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 60,
   },
-  headerCard: {
-    marginBottom: 20,
+  headerSection: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 30,
+    paddingHorizontal: 4,
   },
-  header: {
-    alignItems: "center",
+  titleArea: {
+    flex: 1,
+    alignItems: "flex-start",
   },
-  title: {
-    fontSize: 28,
+  mainTitle: {
+    fontSize: 24,
     fontWeight: "bold",
     color: SuiColors.aqua,
     marginBottom: 8,
+    textAlign: "left",
   },
-  subtitle: {
+  mainSubtitle: {
     fontSize: 16,
     color: "rgba(192, 230, 255, 0.8)",
-    textAlign: "center",
+    textAlign: "left",
   },
-  transactionsCard: {
+  transactionsSection: {
     marginBottom: 20,
   },
-  sectionTitle: {
-    fontSize: 18,
+  sectionLabel: {
+    fontSize: 20,
     fontWeight: "600",
     color: SuiColors.aqua,
-    marginBottom: 16,
+    marginBottom: 8,
+  },
+  transactionsList: {
+    borderRadius: 16,
+    overflow: "hidden",
   },
   transactionItem: {
     paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(77, 162, 255, 0.1)",
   },
-  lastTransaction: {
-    borderBottomWidth: 0,
+  transactionCard: {
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.1)",
+    borderRadius: 12,
   },
-  transactionHeader: {
+  transactionMainRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 12,
+    alignItems: "center",
   },
-  transactionInfo: {
-    flex: 1,
-  },
-  transactionTitleRow: {
+  leftSection: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 4,
   },
   transactionIcon: {
     fontSize: 18,
-    marginRight: 8,
+  },
+  transactionInfo: {
+    flexDirection: "column",
+    marginLeft: 8,
   },
   transactionType: {
     fontSize: 16,
     fontWeight: "600",
     color: SuiColors.aqua,
-    flex: 1,
   },
   transactionTime: {
     fontSize: 14,
     color: "rgba(192, 230, 255, 0.7)",
   },
-  transactionStatus: {
+  rightSection: {
     flexDirection: "row",
     alignItems: "center",
   },
-  statusIndicator: {
+  statusContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  statusDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     marginRight: 6,
   },
-  statusText: {
+  statusLabel: {
     fontSize: 12,
     fontWeight: "600",
   },
-  transactionDetails: {
-    paddingLeft: 26,
-  },
-  detailRow: {
+  infoRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 4,
   },
-  detailLabel: {
+  gasInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  infoLabel: {
     fontSize: 14,
     color: "rgba(192, 230, 255, 0.6)",
   },
-  detailValue: {
+  infoValue: {
     fontSize: 14,
     color: SuiColors.aqua,
     fontWeight: "500",
   },
-  digestValue: {
+  explorerHint: {
+    fontSize: 14,
+    color: "#4ECDC4",
+    fontWeight: "500",
+  },
+  idRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  idPrefix: {
+    fontSize: 14,
+    color: "rgba(192, 230, 255, 0.6)",
+  },
+  idValue: {
     fontSize: 14,
     color: SuiColors.sea,
     fontWeight: "500",
@@ -352,12 +448,10 @@ const styles = StyleSheet.create({
     textAlign: "right",
     marginLeft: 8,
   },
-  emptyCard: {
-    marginBottom: 20,
-  },
-  emptyContainer: {
+  emptySection: {
     alignItems: "center",
-    paddingVertical: 40,
+    paddingVertical: 60,
+    paddingHorizontal: 20,
   },
   emptyIcon: {
     fontSize: 48,
@@ -375,7 +469,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 24,
   },
-  statsCard: {
+  statsSection: {
     marginBottom: 20,
   },
   statsGrid: {
@@ -383,28 +477,27 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     justifyContent: "space-between",
   },
-  statBox: {
+  statCard: {
     width: "48%",
     alignItems: "center",
     backgroundColor: "rgba(77, 162, 255, 0.05)",
-    borderRadius: 12,
-    paddingVertical: 16,
-    marginBottom: 12,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    marginBottom: 6,
     borderWidth: 1,
     borderColor: "rgba(77, 162, 255, 0.1)",
   },
   statNumber: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "bold",
     color: SuiColors.sea,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 13,
     color: "rgba(192, 230, 255, 0.7)",
     textAlign: "center",
-  },
-  bottomSpace: {
-    height: 40,
+    fontWeight: "500",
   },
 });

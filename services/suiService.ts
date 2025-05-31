@@ -22,6 +22,7 @@ export interface Transaction {
   gasUsed: number;
   success: boolean;
   kind: string;
+  explorerUrl: string;
 }
 
 class SuiService {
@@ -52,30 +53,85 @@ class SuiService {
     this.client = new SuiClient({ url: this.rpcUrl });
   }
 
+  private getExplorerUrl(digest: string): string {
+    const baseUrls = {
+      mainnet: 'https://suiscan.xyz/mainnet/tx',
+      testnet: 'https://suiscan.xyz/testnet/tx',
+      devnet: 'https://suiscan.xyz/devnet/tx'
+    };
+    
+    return `${baseUrls[this.network] || baseUrls.testnet}/${digest}`;
+  }
+
   async getWalletData(address: string): Promise<WalletData> {
     try {
+      // Fetch balance
       const balance = await this.client.getBalance({ owner: address });
       const suiBalance = Number.parseInt(balance.totalBalance) / Number(MIST_PER_SUI);
 
+      // Fetch coins/assets
       const coins = await this.client.getAllCoins({ owner: address });
       const assets: Asset[] = this.processCoins(coins.data);
 
+      // Fetch transactions with detailed options
       const transactions = await this.client.queryTransactionBlocks({
         filter: {
           FromAddress: address,
         },
         limit: 10,
         order: 'descending',
+        options: {
+          showEffects: true,
+          showInput: true,
+          showEvents: true,
+          showObjectChanges: true,
+        },
       });
+
+      if (!transactions.data || transactions.data.length === 0) {
+        // Try fetching transactions where the address is the recipient
+        const incomingTransactions = await this.client.queryTransactionBlocks({
+          filter: {
+            ToAddress: address,
+          },
+          limit: 5,
+          order: 'descending',
+          options: {
+            showEffects: true,
+            showInput: true,
+            showEvents: true,
+            showObjectChanges: true,
+          },
+        });
+        
+        // Combine both sets of transactions
+        const allTransactions = [
+          ...(transactions.data || []),
+          ...(incomingTransactions.data || [])
+        ];
+        
+        const processedTransactions = await this.processTransactions(allTransactions);
+
+        const walletData = {
+          address,
+          balance: suiBalance,
+          assets,
+          transactions: processedTransactions,
+        };
+
+        return walletData;
+      }
 
       const processedTransactions = await this.processTransactions(transactions.data);
 
-      return {
+      const walletData = {
         address,
         balance: suiBalance,
         assets,
         transactions: processedTransactions,
       };
+
+      return walletData;
     } catch (error) {
       throw new Error(`Failed to fetch wallet data: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -95,29 +151,53 @@ class SuiService {
       }
     });
 
-    return Array.from(assetMap.entries()).map(([coinType, balance]) => ({
+    const assets = Array.from(assetMap.entries()).map(([coinType, balance]) => ({
       coinType,
       balance: coinType.includes('sui::SUI') ? balance / Number(MIST_PER_SUI) : balance,
       symbol: this.getCoinSymbol(coinType),
     }));
+
+    return assets;
   }
 
   private async processTransactions(transactions: any[]): Promise<Transaction[]> {
-    return transactions.map((tx) => {
-      const gasUsed = tx.effects?.gasUsed?.computationCost || 0;
-      const success = tx.effects?.status?.status === 'success';
-      const kind = tx.transaction?.data?.transaction?.kind || 'Unknown';
+    const processedTransactions = transactions.map((tx) => {
+      // Extract gas used more carefully
+      const gasUsed = tx.effects?.gasUsed?.computationCost || 
+                     tx.effects?.gasUsed?.storageCost || 
+                     tx.effects?.gasUsed?.storageRebate || 
+                     0;
       
-      return {
+      const success = tx.effects?.status?.status === 'success';
+      
+      // Better transaction kind extraction
+      let kind = 'Unknown';
+      if (tx.transaction?.data?.transaction?.kind) {
+        kind = tx.transaction.data.transaction.kind;
+      } else if (tx.transaction?.data?.transaction?.ProgrammableTransaction) {
+        kind = 'ProgrammableTransaction';
+      } else if (tx.transaction?.data?.transaction?.TransferObject) {
+        kind = 'TransferObject';
+      }
+      
+      // Use checkpoint timestamp if available, otherwise current time
+      const timestamp = tx.timestampMs || tx.checkpoint || Date.now();
+      
+      const processedTx = {
         digest: tx.digest,
-        timestamp: tx.timestampMs || Date.now(),
+        timestamp,
         sender: tx.transaction?.data?.sender || '',
         effects: tx.effects,
         gasUsed,
         success,
         kind,
+        explorerUrl: this.getExplorerUrl(tx.digest),
       };
+      
+      return processedTx;
     });
+
+    return processedTransactions;
   }
 
   private getCoinSymbol(coinType: string): string {
@@ -131,7 +211,7 @@ class SuiService {
 
   async getTransactionDetails(digest: string) {
     try {
-      return await this.client.getTransactionBlock({
+      const details = await this.client.getTransactionBlock({
         digest,
         options: {
           showEffects: true,
@@ -140,16 +220,19 @@ class SuiService {
           showObjectChanges: true,
         },
       });
+      
+      return details;
     } catch (error) {
       throw new Error(`Failed to fetch transaction details: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   getNetworkInfo() {
-    return {
+    const info = {
       network: this.network,
       rpcUrl: this.rpcUrl
     };
+    return info;
   }
 }
 

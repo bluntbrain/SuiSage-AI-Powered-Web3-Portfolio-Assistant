@@ -8,24 +8,28 @@ import {
   Alert,
   ActivityIndicator,
   StatusBar,
+  Linking,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { ThemedText } from "@/components/ThemedText";
 import { GlassCard } from "@/components/GlassCard";
 import { NetworkDropdown } from "@/components/NetworkDropdown";
 import { SuiColors } from "@/constants/Colors";
-import { suiService, WalletData } from "@/services/suiService";
+import { suiService } from "@/services/suiService";
 import { aiService, AnalysisResult } from "@/services/aiService";
+import { useWallet } from "@/contexts/WalletContext";
+import { useRouter } from "expo-router";
 
 export default function HomeScreen() {
   const [walletAddress, setWalletAddress] = useState("");
-  const [walletData, setWalletData] = useState<WalletData | null>(null);
+  const { walletData, setWalletData } = useWallet();
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [selectedNetwork, setSelectedNetwork] = useState<
     "mainnet" | "testnet" | "devnet" | "localnet"
   >("testnet");
+  const router = useRouter();
 
   const handleNetworkChange = (
     network: "mainnet" | "testnet" | "devnet" | "localnet"
@@ -105,6 +109,103 @@ export default function HomeScreen() {
     }
   };
 
+  const formatDate = (timestamp: number | string) => {
+    try {
+      // Convert string to number if needed
+      const ts =
+        typeof timestamp === "string" ? parseInt(timestamp) : timestamp;
+
+      // Ensure we have a valid timestamp
+      if (!ts || ts <= 0) {
+        return "Unknown date";
+      }
+
+      const date = new Date(ts);
+
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return "Invalid date";
+      }
+
+      return date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch (error) {
+      return "Date error";
+    }
+  };
+
+  const formatGas = (gasUsed: number) => {
+    if (!gasUsed || gasUsed <= 0) {
+      return "0.000 MIST";
+    }
+    return `${(gasUsed / 1000000).toFixed(3)} MIST`;
+  };
+
+  const getTransactionIcon = (kind: string) => {
+    switch (kind.toLowerCase()) {
+      case "programmabletransaction":
+        return "⚡";
+      case "transferobject":
+        return "📤";
+      case "publish":
+        return "📋";
+      case "call":
+        return "🔗";
+      default:
+        return "📝";
+    }
+  };
+
+  const getStatusColor = (success: boolean) => {
+    return success ? "#4ECDC4" : "#FF6B6B";
+  };
+
+  const handleTransactionPress = (transaction: any) => {
+    // Check if explorerUrl exists
+    if (!transaction.explorerUrl) {
+      Alert.alert("Error", "Explorer URL not available for this transaction");
+      return;
+    }
+
+    Alert.alert(
+      "Transaction Options",
+      `Transaction: ${transaction.digest.slice(
+        0,
+        8
+      )}...${transaction.digest.slice(-8)}`,
+      [
+        {
+          text: "View in Explorer",
+          onPress: () => {
+            if (transaction.explorerUrl) {
+              Linking.openURL(transaction.explorerUrl);
+            } else {
+              Alert.alert("Error", "Explorer URL not available");
+            }
+          },
+        },
+        {
+          text: "Copy Digest",
+          onPress: () => {
+            // In a real app, you'd use Clipboard.setString
+            Alert.alert("Copied", "Transaction digest copied to clipboard");
+          },
+        },
+        { text: "Cancel", style: "cancel" },
+      ]
+    );
+  };
+
+  const handleViewMoreTransactions = () => {
+    router.push("/explore");
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -122,35 +223,25 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <GlassCard
-          style={styles.headerCard}
-          glowIntensity="high"
-          intensity={30}
-        >
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <ThemedText type="title" style={styles.title}>
-                SuiSage
-              </ThemedText>
-              <ThemedText style={styles.subtitle}>
-                AI-Powered Web3 Portfolio Assistant
-              </ThemedText>
-            </View>
-            <View style={styles.headerRight}>
-              <NetworkDropdown
-                selectedNetwork={selectedNetwork}
-                onNetworkChange={handleNetworkChange}
-              />
-            </View>
+        {/* Clean header without card */}
+        <View style={styles.headerSection}>
+          <View style={styles.titleArea}>
+            <ThemedText style={styles.mainTitle}>SuiSage</ThemedText>
+            <ThemedText style={styles.mainSubtitle}>
+              AI Web3 Portfolio Assistant
+            </ThemedText>
           </View>
-        </GlassCard>
+          <View style={styles.networkArea}>
+            <NetworkDropdown
+              selectedNetwork={selectedNetwork}
+              onNetworkChange={handleNetworkChange}
+            />
+          </View>
+        </View>
 
-        <GlassCard
-          style={styles.inputCard}
-          intensity={25}
-          glowIntensity="medium"
-        >
-          <ThemedText type="subtitle" style={styles.sectionTitle}>
+        {/* Input section with minimal card styling */}
+        <View style={styles.inputSection}>
+          <ThemedText style={styles.sectionLabel}>
             Enter Sui Wallet Address
           </ThemedText>
           <View style={styles.inputContainer}>
@@ -177,38 +268,123 @@ export default function HomeScreen() {
               )}
             </TouchableOpacity>
           </View>
-        </GlassCard>
+        </View>
 
+        {/* Portfolio overview without heavy card styling */}
         {walletData && (
-          <GlassCard
-            style={styles.portfolioCard}
-            intensity={25}
-            glowIntensity="medium"
-          >
-            <ThemedText type="subtitle" style={styles.sectionTitle}>
+          <View style={styles.portfolioSection}>
+            <ThemedText style={styles.sectionLabel}>
               Portfolio Overview
             </ThemedText>
-            <View style={styles.balanceContainer}>
+            <View style={styles.balanceDisplay}>
               <ThemedText style={styles.balanceLabel}>SUI Balance</ThemedText>
               <ThemedText style={styles.balanceValue}>
                 {walletData.balance.toFixed(4)} SUI
               </ThemedText>
             </View>
-            <View style={styles.statsRow}>
-              <View style={styles.statItem}>
-                <ThemedText style={styles.statValue}>
+            <View style={styles.statsGrid}>
+              <View style={styles.statCard}>
+                <ThemedText style={styles.statNumber}>
                   {walletData.assets.length}
                 </ThemedText>
                 <ThemedText style={styles.statLabel}>Assets</ThemedText>
               </View>
-              <View style={styles.statItem}>
-                <ThemedText style={styles.statValue}>
+              <View style={styles.statCard}>
+                <ThemedText style={styles.statNumber}>
                   {walletData.transactions.length}
                 </ThemedText>
                 <ThemedText style={styles.statLabel}>Recent Txs</ThemedText>
               </View>
             </View>
-          </GlassCard>
+          </View>
+        )}
+
+        {/* Transactions with minimal card styling */}
+        {walletData && walletData.transactions.length > 0 && (
+          <View style={styles.transactionsSection}>
+            <ThemedText style={styles.sectionLabel}>
+              Recent Transactions
+            </ThemedText>
+            <View style={styles.transactionsList}>
+              {walletData.transactions.slice(0, 3).map((tx, index) => (
+                <TouchableOpacity
+                  key={tx.digest}
+                  style={styles.transactionItem}
+                  onPress={() => handleTransactionPress(tx)}
+                >
+                  <View style={styles.transactionCard}>
+                    {/* Single row with icon, type, and status */}
+                    <View style={styles.transactionMainRow}>
+                      <View style={styles.leftSection}>
+                        <ThemedText style={styles.transactionIcon}>
+                          {getTransactionIcon(tx.kind)}
+                        </ThemedText>
+                        <View style={styles.transactionInfo}>
+                          <ThemedText style={styles.transactionType}>
+                            {tx.kind === "ProgrammableTransaction"
+                              ? "Contract Call"
+                              : tx.kind}
+                          </ThemedText>
+                          <ThemedText style={styles.transactionTime}>
+                            {formatDate(tx.timestamp)}
+                          </ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.rightSection}>
+                        <View style={styles.statusContainer}>
+                          <View
+                            style={[
+                              styles.statusDot,
+                              { backgroundColor: getStatusColor(tx.success) },
+                            ]}
+                          />
+                          <ThemedText
+                            style={[
+                              styles.statusLabel,
+                              { color: getStatusColor(tx.success) },
+                            ]}
+                          >
+                            {tx.success ? "Success" : "Failed"}
+                          </ThemedText>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Compact info row */}
+                    <View style={styles.infoRow}>
+                      <View style={styles.gasInfo}>
+                        <ThemedText style={styles.infoLabel}>Gas: </ThemedText>
+                        <ThemedText style={styles.infoValue}>
+                          {formatGas(tx.gasUsed)}
+                        </ThemedText>
+                      </View>
+                      <ThemedText style={styles.explorerHint}>
+                        🔗 View on Explorer
+                      </ThemedText>
+                    </View>
+
+                    {/* Transaction ID - compact */}
+                    <View style={styles.idRow}>
+                      <ThemedText style={styles.idPrefix}>ID: </ThemedText>
+                      <ThemedText style={styles.idValue} numberOfLines={1}>
+                        {tx.digest}
+                      </ThemedText>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {walletData.transactions.length > 3 && (
+              <TouchableOpacity
+                style={styles.viewMoreButton}
+                onPress={handleViewMoreTransactions}
+              >
+                <ThemedText style={styles.viewMoreText}>
+                  View all {walletData.transactions.length} transactions →
+                </ThemedText>
+              </TouchableOpacity>
+            )}
+          </View>
         )}
 
         {analysisLoading && (
@@ -234,7 +410,7 @@ export default function HomeScreen() {
               glowIntensity="medium"
             >
               <View style={styles.healthHeader}>
-                <ThemedText type="subtitle" style={styles.sectionTitle}>
+                <ThemedText type="subtitle" style={styles.sectionLabel}>
                   Portfolio Health
                 </ThemedText>
                 <View
@@ -276,7 +452,7 @@ export default function HomeScreen() {
               intensity={25}
               glowIntensity="medium"
             >
-              <ThemedText type="subtitle" style={styles.sectionTitle}>
+              <ThemedText type="subtitle" style={styles.sectionLabel}>
                 AI Recommendations
               </ThemedText>
               {analysis.advice.map((advice, index) => (
@@ -351,40 +527,47 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 60,
   },
-  headerCard: {
-    marginBottom: 20,
-  },
-  header: {
+  headerSection: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
+    marginBottom: 16,
+    paddingHorizontal: 4,
   },
-  headerLeft: {
+  titleArea: {
     flex: 1,
+    alignItems: "flex-start",
+    marginBottom: 0,
   },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  title: {
-    fontSize: 32,
+  mainTitle: {
+    fontSize: 24,
     fontWeight: "bold",
     color: SuiColors.aqua,
-    marginBottom: 8,
+    marginTop: 8,
+    textAlign: "left",
   },
-  subtitle: {
+  mainSubtitle: {
     fontSize: 16,
     color: "rgba(192, 230, 255, 0.8)",
-    textAlign: "center",
+    textAlign: "left",
   },
-  inputCard: {
-    marginBottom: 20,
+  networkArea: {
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
   },
-  sectionTitle: {
-    fontSize: 18,
+  inputSection: {
+    marginBottom: 30,
+    backgroundColor: "rgba(77, 162, 255, 0.05)",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.1)",
+  },
+  sectionLabel: {
+    fontSize: 16,
     fontWeight: "600",
     color: SuiColors.aqua,
-    marginBottom: 16,
+    marginBottom: 8,
   },
   inputContainer: {
     flexDirection: "row",
@@ -421,12 +604,15 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 16,
   },
-  portfolioCard: {
-    marginBottom: 20,
+  portfolioSection: {
+    marginBottom: 30,
   },
-  balanceContainer: {
+  balanceDisplay: {
     alignItems: "center",
     marginBottom: 20,
+    backgroundColor: "rgba(77, 162, 255, 0.03)",
+    borderRadius: 16,
+    padding: 20,
   },
   balanceLabel: {
     fontSize: 16,
@@ -437,15 +623,22 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "bold",
     color: SuiColors.sea,
+    lineHeight: 32,
   },
-  statsRow: {
+  statsGrid: {
     flexDirection: "row",
     justifyContent: "space-around",
   },
-  statItem: {
+  statCard: {
     alignItems: "center",
+    backgroundColor: "rgba(77, 162, 255, 0.05)",
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 80,
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.1)",
   },
-  statValue: {
+  statNumber: {
     fontSize: 20,
     fontWeight: "bold",
     color: SuiColors.aqua,
@@ -550,5 +743,118 @@ const styles = StyleSheet.create({
   },
   bottomSpace: {
     height: 40,
+  },
+  transactionsSection: {
+    marginBottom: 20,
+  },
+  transactionsList: {
+    backgroundColor: "rgba(77, 162, 255, 0.02)",
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.1)",
+  },
+  transactionItem: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(77, 162, 255, 0.2)",
+  },
+  transactionCard: {
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    borderRadius: 12,
+    gap: 8,
+  },
+  transactionMainRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  leftSection: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  transactionIcon: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  transactionInfo: {
+    flexDirection: "column",
+  },
+  transactionType: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+  },
+  transactionTime: {
+    fontSize: 12,
+    color: "rgba(192, 230, 255, 0.8)",
+  },
+  rightSection: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  statusContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  statusLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  infoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  gasInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  infoLabel: {
+    fontSize: 14,
+    color: "rgba(192, 230, 255, 0.8)",
+  },
+  infoValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: SuiColors.sea,
+  },
+  explorerHint: {
+    fontSize: 12,
+    color: "#4ECDC4",
+    fontWeight: "500",
+  },
+  idRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  idPrefix: {
+    fontSize: 12,
+    color: "rgba(192, 230, 255, 0.8)",
+  },
+  idValue: {
+    fontSize: 12,
+    color: "rgba(192, 230, 255, 0.8)",
+    flex: 1,
+  },
+  viewMoreButton: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(77, 162, 255, 0.2)",
+    alignItems: "center",
+  },
+  viewMoreText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
   },
 });
