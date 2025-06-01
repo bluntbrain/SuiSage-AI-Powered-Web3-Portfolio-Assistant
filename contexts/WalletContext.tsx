@@ -1,10 +1,22 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
 import { WalletData } from "@/services/suiService";
 import { VoiceSettings, voiceService } from "@/services/voiceService";
+import {
+  ChatMode,
+  ChainConfig,
+  CHAIN_CONFIGS,
+} from "@/services/trainingDataService";
 
 interface AIProviderSettings {
   openai: boolean;
   gemini: boolean;
+}
+
+interface ChatSettings {
+  mode: ChatMode;
+  selectedChainConfig: ChainConfig | null;
+  chainEnabled: boolean;
+  showChainComparison: boolean;
 }
 
 interface WalletContextType {
@@ -19,6 +31,11 @@ interface WalletContextType {
   setVoiceSettings: (settings: VoiceSettings) => void;
   toggleVoiceMode: () => void;
   updateSelectedVoice: (voice: string) => void;
+  chatSettings: ChatSettings;
+  setChatMode: (mode: ChatMode) => void;
+  setSelectedChainConfig: (config: ChainConfig | null) => void;
+  toggleChainMode: () => void;
+  setShowChainComparison: (show: boolean) => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -46,6 +63,12 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({
     enabled: false,
     selectedVoice: voiceService.getDefaultVoice(),
+  });
+  const [chatSettings, setChatSettings] = useState<ChatSettings>({
+    mode: "parallel",
+    selectedChainConfig: null,
+    chainEnabled: true,
+    showChainComparison: true,
   });
 
   const toggleAIProvider = (provider: keyof AIProviderSettings) => {
@@ -79,6 +102,34 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     }));
   };
 
+  const setChatMode = (mode: ChatMode) => {
+    setChatSettings((prevSettings) => ({
+      ...prevSettings,
+      mode: mode,
+    }));
+  };
+
+  const setSelectedChainConfig = (config: ChainConfig | null) => {
+    setChatSettings((prevSettings) => ({
+      ...prevSettings,
+      selectedChainConfig: config,
+    }));
+  };
+
+  const toggleChainMode = () => {
+    setChatSettings((prevSettings) => ({
+      ...prevSettings,
+      chainEnabled: !prevSettings.chainEnabled,
+    }));
+  };
+
+  const setShowChainComparison = (show: boolean) => {
+    setChatSettings((prevSettings) => ({
+      ...prevSettings,
+      showChainComparison: show,
+    }));
+  };
+
   return (
     <WalletContext.Provider
       value={{
@@ -93,6 +144,11 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         setVoiceSettings,
         toggleVoiceMode,
         updateSelectedVoice,
+        chatSettings,
+        setChatMode,
+        setSelectedChainConfig,
+        toggleChainMode,
+        setShowChainComparison,
       }}
     >
       {children}

@@ -1,5 +1,13 @@
 import OpenAI from 'openai';
 import { WalletData } from './suiService';
+import { 
+  ChainConfig, 
+  ModelResponse, 
+  ChainStep, 
+  ChatMode,
+  AI_MODELS,
+  CHAIN_CONFIGS
+} from './trainingDataService';
 
 export interface AIAdvice {
   category: 'gas' | 'staking' | 'diversification' | 'risk' | 'general';
@@ -29,6 +37,16 @@ export interface ChatMessage {
   timestamp: number;
   isLoading?: boolean;
   sessionId?: string;
+}
+
+export interface ChainedResponse {
+  finalResponse: ChatMessage;
+  chainData: {
+    steps: ChainStep[];
+    finalModelId: string;
+    totalProcessingTime: number;
+  };
+  responses: Record<string, ModelResponse>;
 }
 
 export interface AIProvider {
@@ -230,7 +248,7 @@ answer the user's question directly. no intro paragraphs.`;
       },
     };
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${this.geminiApiKey}`;
     console.log('[AIService] Gemini API URL (without key):', apiUrl.replace(this.geminiApiKey, '[API_KEY]'));
     console.log('[AIService] Gemini request payload:', JSON.stringify(requestPayload, null, 2));
 
@@ -283,6 +301,205 @@ answer the user's question directly. no intro paragraphs.`;
       }
       throw error;
     }
+  }
+
+  // New unified method for handling both parallel and chained AI requests
+  async processAIRequest(
+    question: string, 
+    walletData: WalletData | null, 
+    chatMode: ChatMode,
+    chainConfig?: ChainConfig,
+    enabledProviders?: { openai: boolean; gemini: boolean }
+  ): Promise<ChatMessage[] | ChainedResponse[] | { parallelResponses: ChatMessage[], chainResponses: ChainedResponse[] }> {
+    if (chatMode === 'parallel') {
+      return this.askMultipleAIs(question, walletData, enabledProviders);
+    } else if (chatMode === 'chain') {
+      // In chain mode, always run both configurations for comparison
+      return this.executeAllChains(question, walletData);
+    } else if (chatMode === 'universal') {
+      // In universal mode, run both parallel and chain modes for comprehensive comparison
+      console.log('[AIService] Universal mode: running both parallel and chain modes');
+      
+      const [parallelResponses, chainResponses] = await Promise.all([
+        this.askMultipleAIs(question, walletData, enabledProviders),
+        this.executeAllChains(question, walletData)
+      ]);
+      
+      return {
+        parallelResponses: parallelResponses as ChatMessage[],
+        chainResponses: chainResponses as ChainedResponse[]
+      };
+    }
+    
+    // Fallback to parallel mode
+    return this.askMultipleAIs(question, walletData, enabledProviders);
+  }
+
+  async executeAllChains(
+    question: string, 
+    walletData: WalletData | null
+  ): Promise<ChainedResponse[]> {
+    console.log('[AIService] executeAllChains started');
+    
+    const allChainResults: ChainedResponse[] = [];
+    
+    // Run all chain configurations in parallel for comparison
+    const chainPromises = CHAIN_CONFIGS.map(async (config) => {
+      try {
+        console.log(`[AIService] Executing chain: ${config.name}`);
+        return await this.executeAIChain(question, walletData, config);
+      } catch (error) {
+        console.error(`[AIService] Chain ${config.name} failed:`, error);
+        // Return error response instead of throwing
+        const errorResponse: ChainedResponse = {
+          finalResponse: {
+            id: `chain-error-${Date.now()}`,
+            text: `Chain "${config.name}" failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            sender: config.models[config.models.length - 1] as 'openai' | 'gemini',
+            timestamp: Date.now(),
+          },
+          chainData: {
+            steps: [],
+            finalModelId: config.models[config.models.length - 1],
+            totalProcessingTime: 0
+          },
+          responses: {}
+        };
+        return errorResponse;
+      }
+    });
+
+    const results = await Promise.allSettled(chainPromises);
+    
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        // Add chain config info to the response
+        const chainResult = result.value;
+        chainResult.finalResponse.sessionId = `chain_${index}`;
+        allChainResults.push(chainResult);
+        console.log(`[AIService] Chain ${CHAIN_CONFIGS[index].name} completed successfully`);
+      } else {
+        console.error(`[AIService] Chain ${CHAIN_CONFIGS[index].name} promise rejected:`, result.reason);
+      }
+    });
+
+    console.log(`[AIService] executeAllChains completed with ${allChainResults.length} results`);
+    return allChainResults;
+  }
+
+  async executeAIChain(
+    question: string, 
+    walletData: WalletData | null, 
+    chainConfig: ChainConfig
+  ): Promise<ChainedResponse> {
+    console.log('[AIService] executeAIChain started:');
+    console.log('  Chain config:', chainConfig);
+    console.log('  Models:', chainConfig.models);
+    
+    const startTime = Date.now();
+    const steps: ChainStep[] = [];
+    const responses: Record<string, ModelResponse> = {};
+    let lastResponse = '';
+
+    for (let i = 0; i < chainConfig.models.length; i++) {
+      const modelId = chainConfig.models[i];
+      const isFirstStep = i === 0;
+      const stepStart = Date.now();
+
+      console.log(`[AIService] Chain step ${i + 1}: ${modelId}`);
+
+      // Create enhanced prompt for non-first steps
+      let enhancedPrompt = question;
+      if (!isFirstStep && lastResponse) {
+        enhancedPrompt = this.createChainPrompt(question, lastResponse, modelId, i + 1);
+        console.log(`[AIService] Enhanced prompt for ${modelId}:`, enhancedPrompt.substring(0, 100) + '...');
+      }
+
+      try {
+        let response: string;
+        
+        if (modelId === 'openai' && this.openaiApiKey) {
+          response = await this.askOpenAI(enhancedPrompt, walletData);
+        } else if (modelId === 'gemini' && this.geminiApiKey) {
+          response = await this.askGemini(enhancedPrompt, walletData);
+        } else {
+          throw new Error(`Model ${modelId} not configured or not available`);
+        }
+
+        const processingTime = Date.now() - stepStart;
+        
+        const modelResponse: ModelResponse = {
+          modelId,
+          content: response,
+          timestamp: Date.now(),
+          metadata: {
+            processingTime
+          }
+        };
+
+        const chainStep: ChainStep = {
+          stepIndex: i,
+          modelId,
+          prompt: isFirstStep ? question : enhancedPrompt,
+          response: modelResponse,
+          enhancedPrompt: isFirstStep ? undefined : enhancedPrompt
+        };
+
+        steps.push(chainStep);
+        responses[modelId] = modelResponse;
+        lastResponse = response;
+
+        console.log(`[AIService] Step ${i + 1} completed in ${processingTime}ms`);
+      } catch (error) {
+        console.error(`[AIService] Error in chain step ${i + 1} (${modelId}):`, error);
+        throw new Error(`Chain failed at step ${i + 1} (${modelId}): ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+
+    const totalProcessingTime = Date.now() - startTime;
+    const finalModelId = chainConfig.models[chainConfig.models.length - 1];
+
+    const finalResponse: ChatMessage = {
+      id: `chain-${Date.now()}`,
+      text: lastResponse,
+      sender: finalModelId as 'openai' | 'gemini',
+      timestamp: Date.now(),
+    };
+
+    const result: ChainedResponse = {
+      finalResponse,
+      chainData: {
+        steps,
+        finalModelId,
+        totalProcessingTime
+      },
+      responses
+    };
+
+    console.log(`[AIService] Chain completed in ${totalProcessingTime}ms with ${steps.length} steps`);
+    return result;
+  }
+
+  private createChainPrompt(
+    originalQuestion: string, 
+    previousResponse: string, 
+    currentModelId: string, 
+    stepNumber: number
+  ): string {
+    const modelName = AI_MODELS[currentModelId]?.name || currentModelId;
+    
+    return `Previous AI Analysis:
+"${previousResponse}"
+
+Original User Question: "${originalQuestion}"
+
+As ${modelName}, please:
+1. Review the previous analysis
+2. Provide additional insights, corrections, or alternative perspectives
+3. Build upon or refine the previous response
+4. Focus on what the previous analysis might have missed
+
+Please provide a comprehensive response that enhances the overall analysis.`;
   }
 
   getAvailableProviders(): AIProvider[] {

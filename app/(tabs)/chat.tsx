@@ -9,28 +9,50 @@ import {
   Platform,
   StatusBar,
   Alert,
+  Switch,
+  Image,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { ThemedText } from "@/components/ThemedText";
 import { SuiColors } from "@/constants/Colors";
-import { aiService, ChatMessage, AIProvider } from "@/services/aiService";
+import {
+  aiService,
+  ChatMessage,
+  AIProvider,
+  ChainedResponse,
+} from "@/services/aiService";
 import {
   trainingDataService,
   ComparisonSession,
+  ChatMode,
+  ChainConfig,
+  CHAIN_CONFIGS,
+  ModelResponse,
+  getAvailableSelectionOptions,
 } from "@/services/trainingDataService";
 import { useWallet } from "@/contexts/WalletContext";
 import { voiceService } from "@/services/voiceService";
 
 export default function ChatScreen() {
-  const { walletData, aiProviderSettings, voiceSettings, toggleVoiceMode } =
-    useWallet();
+  const {
+    walletData,
+    aiProviderSettings,
+    voiceSettings,
+    toggleVoiceMode,
+    chatSettings,
+    setChatMode,
+    setSelectedChainConfig,
+    toggleChainMode,
+    setShowChainComparison,
+  } = useWallet();
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [showChainSettings, setShowChainSettings] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const [availableProviders, setAvailableProviders] = useState<AIProvider[]>(
     []
@@ -38,7 +60,13 @@ export default function ChatScreen() {
   const [currentSession, setCurrentSession] =
     useState<ComparisonSession | null>(null);
   const [selectedResponses, setSelectedResponses] = useState<{
-    [sessionId: string]: "openai" | "gemini";
+    [sessionId: string]: string; // Can be modelId or chainId
+  }>({});
+  const [expandedResponses, setExpandedResponses] = useState<{
+    [responseId: string]: boolean;
+  }>({});
+  const [expandedSessions, setExpandedSessions] = useState<{
+    [sessionId: string]: boolean;
   }>({});
 
   // Suggested prompts for when chat is empty
@@ -59,6 +87,33 @@ export default function ChatScreen() {
     }, 100);
   };
 
+  const toggleResponseExpansion = (responseId: string) => {
+    setExpandedResponses((prev) => ({
+      ...prev,
+      [responseId]: !prev[responseId],
+    }));
+  };
+
+  const toggleSessionExpansion = (sessionId: string) => {
+    setExpandedSessions((prev) => ({
+      ...prev,
+      [sessionId]: !prev[sessionId],
+    }));
+  };
+
+  const getPreviewText = (text: string, maxLength: number = 120): string => {
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength).trim() + "...";
+  };
+
+  const isResponseExpanded = (responseId: string): boolean => {
+    return expandedResponses[responseId] || false;
+  };
+
+  const isSessionExpanded = (sessionId: string): boolean => {
+    return expandedSessions[sessionId] || false;
+  };
+
   const handleSendMessageWithText = async (text: string) => {
     if (!text.trim() || isLoading) return;
 
@@ -72,6 +127,14 @@ export default function ChatScreen() {
         openai: true,
         gemini: false,
       };
+    }
+
+    // Determine effective chat mode - support universal mode
+    let effectiveChatMode: ChatMode = "parallel";
+    if (chatSettings.chainEnabled && chatSettings.showChainComparison) {
+      effectiveChatMode = "universal";
+    } else if (chatSettings.chainEnabled) {
+      effectiveChatMode = "chain";
     }
 
     // Check if any providers are enabled
@@ -109,8 +172,11 @@ export default function ChatScreen() {
         timestamp: Date.now(),
         question: messageText,
         walletData: walletData,
+        chatMode: effectiveChatMode,
+        chainConfig: chatSettings.selectedChainConfig || undefined,
         responses: {},
-        selectedBetter: null,
+        chainData: undefined,
+        selectedOption: null,
       };
       setCurrentSession(newSession);
     }
@@ -119,44 +185,162 @@ export default function ChatScreen() {
     setInputText("");
     setIsLoading(true);
 
-    // Add loading indicators for enabled AI providers only
-    const loadingMessages: ChatMessage[] = enabledProviders.map((provider) => ({
-      id: `${provider.id}-loading-${Date.now()}`,
-      text: voiceSettings.enabled
-        ? "🎤 Generating voice response..."
-        : "Thinking...",
-      sender: provider.id,
-      timestamp: Date.now(),
-      isLoading: true,
-      sessionId: sessionId, // Associate with session
-    }));
+    // Add loading indicators based on effective chat mode
+    let loadingMessages: ChatMessage[];
+
+    if (effectiveChatMode === "universal") {
+      // Show loading indicators for both individual models and chains
+      const modelLoadingMessages = enabledProviders.map((provider) => ({
+        id: `${provider.id}-loading-${Date.now()}`,
+        text: "Thinking...",
+        sender: provider.id,
+        timestamp: Date.now(),
+        isLoading: true,
+        sessionId: sessionId,
+      }));
+
+      const chainLoadingMessages = CHAIN_CONFIGS.map((config, index) => ({
+        id: `chain-loading-${index}-${Date.now()}`,
+        text: `🔗 ${config.name}...`,
+        sender: `chain_${index}` as any,
+        timestamp: Date.now(),
+        isLoading: true,
+        sessionId: sessionId,
+      }));
+
+      loadingMessages = [...modelLoadingMessages, ...chainLoadingMessages];
+    } else if (effectiveChatMode === "chain") {
+      // Show loading indicators for each chain configuration
+      loadingMessages = CHAIN_CONFIGS.map((config, index) => ({
+        id: `chain-loading-${index}-${Date.now()}`,
+        text: voiceSettings.enabled
+          ? "🎤 Generating chain response..."
+          : `🔗 ${config.name}...`,
+        sender: `chain_${index}` as any,
+        timestamp: Date.now(),
+        isLoading: true,
+        sessionId: sessionId,
+      }));
+    } else {
+      // Show loading indicators for parallel mode
+      loadingMessages = enabledProviders.map((provider) => ({
+        id: `${provider.id}-loading-${Date.now()}`,
+        text: voiceSettings.enabled
+          ? "🎤 Generating voice response..."
+          : "Thinking...",
+        sender: provider.id,
+        timestamp: Date.now(),
+        isLoading: true,
+        sessionId: sessionId,
+      }));
+    }
 
     setMessages((prev) => [...prev, ...loadingMessages]);
 
     try {
-      const aiResponses = await aiService.askMultipleAIs(
+      // Use new unified AI processing method
+      const result = await aiService.processAIRequest(
         messageText,
         walletData,
+        effectiveChatMode,
+        chatSettings.selectedChainConfig || undefined,
         effectiveProviderSettings
       );
 
-      // Add session ID to responses and update session data
-      const responsesWithSession = aiResponses.map((response) => ({
-        ...response,
-        sessionId: sessionId,
-      }));
+      let responsesWithSession: ChatMessage[] = [];
+      let updatedSession = newSession;
 
-      // Update session with actual responses (only if not in voice mode)
-      if (newSession) {
-        const updatedSession = { ...newSession };
-        responsesWithSession.forEach((response) => {
-          if (response.sender === "openai") {
-            updatedSession.responses.openai = response.text;
-          } else if (response.sender === "gemini") {
-            updatedSession.responses.gemini = response.text;
-          }
-        });
-        setCurrentSession(updatedSession);
+      if (effectiveChatMode === "parallel") {
+        // Handle parallel responses (existing logic)
+        const aiResponses = result as ChatMessage[];
+        responsesWithSession = aiResponses.map((response) => ({
+          ...response,
+          sessionId: sessionId,
+        }));
+
+        // Update session with actual responses (only if not in voice mode)
+        if (updatedSession) {
+          responsesWithSession.forEach((response) => {
+            const modelResponse: ModelResponse = {
+              modelId: response.sender,
+              content: response.text,
+              timestamp: response.timestamp,
+            };
+            updatedSession!.responses[response.sender] = modelResponse;
+          });
+          setCurrentSession(updatedSession);
+        }
+      } else if (effectiveChatMode === "chain") {
+        // Handle multiple chained responses for comparison
+        const chainedResults = result as ChainedResponse[];
+        responsesWithSession = chainedResults.map((chainResult, index) => ({
+          ...chainResult.finalResponse,
+          sessionId: sessionId,
+          sender: `chain_${index}` as any,
+        }));
+
+        // Update session with chain data
+        if (updatedSession) {
+          updatedSession.chainResponses = {};
+          chainedResults.forEach((chainResult, index) => {
+            const chainId = `chain_${index}`;
+            updatedSession!.chainResponses![chainId] = {
+              chainConfig: CHAIN_CONFIGS[index],
+              responses: chainResult.responses,
+              chainData: chainResult.chainData,
+            };
+          });
+          setCurrentSession(updatedSession);
+        }
+      } else if (effectiveChatMode === "universal") {
+        // Handle universal mode with both parallel and chain responses
+        const universalResult = result as {
+          parallelResponses: ChatMessage[];
+          chainResponses: ChainedResponse[];
+        };
+
+        const parallelResponses = universalResult.parallelResponses.map(
+          (response) => ({
+            ...response,
+            sessionId: sessionId,
+          })
+        );
+
+        const chainResponses = universalResult.chainResponses.map(
+          (chainResult, index) => ({
+            ...chainResult.finalResponse,
+            sessionId: sessionId,
+            sender: `chain_${index}` as any,
+          })
+        );
+
+        responsesWithSession = [...parallelResponses, ...chainResponses];
+
+        // Update session with both parallel and chain data
+        if (updatedSession) {
+          // Add parallel responses
+          parallelResponses.forEach((response) => {
+            const modelResponse: ModelResponse = {
+              modelId: response.sender,
+              content: response.text,
+              timestamp: response.timestamp,
+            };
+            updatedSession!.responses[response.sender] = modelResponse;
+          });
+
+          // Add chain responses
+          updatedSession.chainResponses = {};
+          universalResult.chainResponses.forEach((chainResult, index) => {
+            const chainId = `chain_${index}`;
+            updatedSession!.chainResponses![chainId] = {
+              chainConfig: CHAIN_CONFIGS[index],
+              responses: chainResult.responses,
+              chainData: chainResult.chainData,
+            };
+          });
+
+          setCurrentSession(updatedSession);
+        }
       }
 
       // Remove loading messages and add real responses
@@ -229,7 +413,7 @@ export default function ChatScreen() {
 
   const handleResponseSelection = async (
     sessionId: string,
-    selectedProvider: "openai" | "gemini"
+    selectedProvider: string
   ) => {
     try {
       // Update local state
@@ -242,7 +426,7 @@ export default function ChatScreen() {
       if (currentSession && currentSession.id === sessionId) {
         const updatedSession = {
           ...currentSession,
-          selectedBetter: selectedProvider,
+          selectedOption: selectedProvider,
         };
         await trainingDataService.saveComparisonData(updatedSession);
         console.log(
@@ -265,6 +449,13 @@ export default function ChatScreen() {
   }, [messages]);
 
   const getSenderName = (sender: ChatMessage["sender"]) => {
+    // Handle chain responses
+    if (typeof sender === "string" && sender.startsWith("chain_")) {
+      const chainIndex = parseInt(sender.replace("chain_", ""));
+      const chainConfig = CHAIN_CONFIGS[chainIndex];
+      return chainConfig ? chainConfig.name : `Chain ${chainIndex + 1}`;
+    }
+
     switch (sender) {
       case "openai":
         return "OpenAI GPT";
@@ -278,6 +469,13 @@ export default function ChatScreen() {
   };
 
   const getSenderColor = (sender: ChatMessage["sender"]) => {
+    // Handle chain responses
+    if (typeof sender === "string" && sender.startsWith("chain_")) {
+      const chainIndex = parseInt(sender.replace("chain_", ""));
+      // Alternate colors for different chains
+      return chainIndex === 0 ? "#8B5CF6" : "#F59E0B";
+    }
+
     switch (sender) {
       case "openai":
         return "#10B981";
@@ -288,6 +486,35 @@ export default function ChatScreen() {
       default:
         return SuiColors.aqua;
     }
+  };
+
+  const getAILogo = (sender: ChatMessage["sender"]) => {
+    switch (sender) {
+      case "openai":
+        return require("@/assets/images/chatgpt.png");
+      case "gemini":
+        return require("@/assets/images/gemini.png");
+      default:
+        return null;
+    }
+  };
+
+  const renderAIIndicator = (sender: ChatMessage["sender"]) => {
+    const logo = getAILogo(sender);
+
+    if (logo) {
+      return <Image source={logo} style={styles.aiLogo} resizeMode="contain" />;
+    }
+
+    // Fallback to colored dot for chain responses or unknown senders
+    return (
+      <View
+        style={[
+          styles.aiIndicator,
+          { backgroundColor: getSenderColor(sender) },
+        ]}
+      />
+    );
   };
 
   useEffect(() => {
@@ -337,28 +564,111 @@ export default function ChatScreen() {
                       availableProviders.filter(
                         (p) => p.enabled && aiProviderSettings[p.id]
                       ).length
-                    } AI assistants ready to help`}
+                    } AI assistants ready to help${
+                      chatSettings.chainEnabled &&
+                      chatSettings.showChainComparison
+                        ? " • Universal Comparison Mode"
+                        : chatSettings.chainEnabled
+                        ? " • Chain Mode"
+                        : ""
+                    }`}
               </ThemedText>
             </View>
 
-            <TouchableOpacity
-              style={[
-                styles.voiceToggle,
-                voiceSettings.enabled && styles.voiceToggleActive,
-                !voiceService.isApiConfigured() && styles.voiceToggleDisabled,
-              ]}
-              onPress={handleVoiceToggle}
-            >
-              <IconSymbol
-                name={voiceSettings.enabled ? "mic.fill" : "mic"}
-                size={20}
-                color={
-                  voiceSettings.enabled ? "white" : "rgba(192, 230, 255, 0.7)"
-                }
-              />
-            </TouchableOpacity>
+            <View style={styles.voiceToggleContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.voiceToggle,
+                  voiceSettings.enabled && styles.voiceToggleActive,
+                  !voiceService.isApiConfigured() && styles.voiceToggleDisabled,
+                ]}
+                onPress={handleVoiceToggle}
+              >
+                <IconSymbol
+                  name={voiceSettings.enabled ? "mic.fill" : "mic"}
+                  size={20}
+                  color={
+                    voiceSettings.enabled ? "white" : "rgba(192, 230, 255, 0.7)"
+                  }
+                />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.chainToggle,
+                  chatSettings.chainEnabled && styles.chainToggleActive,
+                ]}
+                onPress={() => setShowChainSettings(!showChainSettings)}
+              >
+                <IconSymbol
+                  name="link"
+                  size={18}
+                  color={
+                    chatSettings.chainEnabled
+                      ? "white"
+                      : "rgba(192, 230, 255, 0.7)"
+                  }
+                />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
+
+        {/* Chain Settings Dropdown */}
+        {showChainSettings && (
+          <View style={styles.chainSettingsContainer}>
+            <View style={styles.chainSettingsHeader}>
+              <ThemedText style={styles.chainSettingsTitle}>
+                Comparison Settings
+              </ThemedText>
+              <TouchableOpacity onPress={() => setShowChainSettings(false)}>
+                <IconSymbol
+                  name="xmark"
+                  size={16}
+                  color="rgba(192, 230, 255, 0.6)"
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.chainSetting}>
+              <ThemedText style={styles.chainSettingLabel}>
+                Enable Chain Mode
+              </ThemedText>
+              <Switch
+                value={chatSettings.chainEnabled}
+                onValueChange={toggleChainMode}
+                trackColor={{
+                  false: "rgba(77, 162, 255, 0.2)",
+                  true: SuiColors.sea,
+                }}
+                thumbColor={chatSettings.chainEnabled ? "white" : "#f4f3f4"}
+              />
+            </View>
+
+            <View style={styles.chainSetting}>
+              <ThemedText style={styles.chainSettingLabel}>
+                Universal Comparison
+              </ThemedText>
+              <Switch
+                value={chatSettings.showChainComparison}
+                onValueChange={setShowChainComparison}
+                trackColor={{
+                  false: "rgba(77, 162, 255, 0.2)",
+                  true: SuiColors.sea,
+                }}
+                thumbColor={
+                  chatSettings.showChainComparison ? "white" : "#f4f3f4"
+                }
+              />
+            </View>
+
+            <ThemedText style={styles.chainSettingDescription}>
+              Universal mode compares all options: individual models (OpenAI,
+              Gemini) AND chain combinations (OpenAI→Gemini, Gemini→OpenAI) in
+              one response.
+            </ThemedText>
+          </View>
+        )}
 
         {/* Messages */}
         <ScrollView
@@ -367,123 +677,308 @@ export default function ChatScreen() {
           contentContainerStyle={styles.messagesContent}
           showsVerticalScrollIndicator={false}
         >
-          {messages.map((message) => (
-            <View
-              key={message.id}
-              style={[
-                styles.messageContainer,
-                message.sender === "user"
-                  ? styles.userMessage
-                  : styles.aiMessage,
-              ]}
-            >
-              {message.sender !== "user" && (
-                <View style={styles.aiHeader}>
+          {messages.map((message, index) => {
+            // Group consecutive AI messages from the same session
+            const isAIMessage = message.sender !== "user";
+            const previousMessage = index > 0 ? messages[index - 1] : null;
+            const nextMessage =
+              index < messages.length - 1 ? messages[index + 1] : null;
+
+            const isFirstInGroup =
+              !previousMessage ||
+              previousMessage.sender === "user" ||
+              previousMessage.sessionId !== message.sessionId;
+            const isLastInGroup =
+              !nextMessage ||
+              nextMessage.sender === "user" ||
+              nextMessage.sessionId !== message.sessionId;
+
+            // Count AI responses in this session
+            const sessionResponses = messages.filter(
+              (m) =>
+                m.sessionId === message.sessionId &&
+                m.sender !== "user" &&
+                !m.isLoading
+            );
+            const hasMultipleResponses = sessionResponses.length > 1;
+
+            return (
+              <View
+                key={message.id}
+                style={[
+                  styles.messageContainer,
+                  message.sender === "user"
+                    ? styles.userMessage
+                    : styles.aiMessage,
+                  isAIMessage && !isFirstInGroup && styles.groupedMessage,
+                ]}
+              >
+                {/* Session Header - shown only for the first AI response in a group */}
+                {isAIMessage && isFirstInGroup && hasMultipleResponses && (
+                  <View style={styles.sessionHeader}>
+                    <View style={styles.sessionHeaderContent}>
+                      <View style={styles.sessionHeaderLeft}>
+                        <IconSymbol
+                          name="brain.head.profile"
+                          size={16}
+                          color={SuiColors.aqua}
+                        />
+                        <ThemedText style={styles.sessionHeaderText}>
+                          AI Comparison ({sessionResponses.length} responses)
+                        </ThemedText>
+                        {chatSettings.chainEnabled &&
+                          chatSettings.showChainComparison && (
+                            <View style={styles.sessionModeIndicator}>
+                              <ThemedText style={styles.sessionModeText}>
+                                🌐 Universal
+                              </ThemedText>
+                            </View>
+                          )}
+
+                        <TouchableOpacity
+                          style={styles.sessionToggleButton}
+                          onPress={() =>
+                            toggleSessionExpansion(message.sessionId!)
+                          }
+                        >
+                          <IconSymbol
+                            name={
+                              isSessionExpanded(message.sessionId!)
+                                ? "chevron.up.circle"
+                                : "chevron.down.circle"
+                            }
+                            size={20}
+                            color={SuiColors.aqua}
+                          />
+                          <ThemedText style={styles.sessionToggleText}>
+                            {isSessionExpanded(message.sessionId!)
+                              ? "Collapse All"
+                              : "Expand All"}
+                          </ThemedText>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {message.sender !== "user" && (
                   <View
                     style={[
-                      styles.aiIndicator,
-                      { backgroundColor: getSenderColor(message.sender) },
+                      styles.aiHeader,
+                      isAIMessage && !isFirstInGroup && styles.compactHeader,
                     ]}
-                  />
-                  <ThemedText style={styles.aiName}>
-                    {getSenderName(message.sender)}
+                  >
+                    {renderAIIndicator(message.sender)}
+                    <ThemedText style={styles.aiName}>
+                      {getSenderName(message.sender)}
+                    </ThemedText>
+
+                    {/* Chain flow indicator */}
+                    {typeof message.sender === "string" &&
+                      message.sender.startsWith("chain_") && (
+                        <View style={styles.chainFlowContainer}>
+                          <View style={styles.chainFlowIndicator}>
+                            {(() => {
+                              const chainIndex = parseInt(
+                                message.sender.replace("chain_", "")
+                              );
+                              const chainConfig = CHAIN_CONFIGS[chainIndex];
+                              if (!chainConfig) return null;
+
+                              return chainConfig.models.map(
+                                (modelId, stepIndex) => (
+                                  <View
+                                    key={stepIndex}
+                                    style={styles.chainStep}
+                                  >
+                                    {stepIndex > 0 && (
+                                      <IconSymbol
+                                        name="arrow.right"
+                                        size={10}
+                                        color="rgba(192, 230, 255, 0.6)"
+                                        style={styles.chainArrow}
+                                      />
+                                    )}
+                                    {getAILogo(modelId as any) ? (
+                                      <Image
+                                        source={getAILogo(modelId as any)!}
+                                        style={styles.chainStepLogo}
+                                        resizeMode="contain"
+                                      />
+                                    ) : (
+                                      <View
+                                        style={[
+                                          styles.chainStepBadge,
+                                          {
+                                            backgroundColor:
+                                              modelId === "openai"
+                                                ? "#10B981"
+                                                : "#3B82F6",
+                                          },
+                                        ]}
+                                      >
+                                        <ThemedText
+                                          style={styles.chainStepText}
+                                        >
+                                          {modelId === "openai" ? "GPT" : "GEM"}
+                                        </ThemedText>
+                                      </View>
+                                    )}
+                                  </View>
+                                )
+                              );
+                            })()}
+                          </View>
+                        </View>
+                      )}
+
+                    {voiceSettings.enabled &&
+                      message.sender === "openai" &&
+                      !message.isLoading && (
+                        <View style={styles.voiceIndicator}>
+                          <IconSymbol
+                            name={
+                              isProcessingAudio
+                                ? "speaker.wave.3.fill"
+                                : "speaker.2.fill"
+                            }
+                            size={12}
+                            color="rgba(192, 230, 255, 0.6)"
+                          />
+                        </View>
+                      )}
+
+                    {/* Expand/Collapse button for AI responses */}
+                    {!message.isLoading &&
+                      message.text.length > 100 &&
+                      message.sessionId &&
+                      !isSessionExpanded(message.sessionId) && (
+                        <TouchableOpacity
+                          style={styles.expandButton}
+                          onPress={() => toggleResponseExpansion(message.id)}
+                        >
+                          <IconSymbol
+                            name={
+                              isResponseExpanded(message.id)
+                                ? "chevron.up"
+                                : "chevron.down"
+                            }
+                            size={14}
+                            color="rgba(192, 230, 255, 0.6)"
+                          />
+                        </TouchableOpacity>
+                      )}
+                  </View>
+                )}
+
+                <View
+                  style={[
+                    styles.messageBubble,
+                    message.sender === "user"
+                      ? styles.userBubble
+                      : styles.aiBubble,
+                    message.isLoading && styles.loadingBubble,
+                    isAIMessage && !isFirstInGroup && styles.groupedBubble,
+                  ]}
+                >
+                  <ThemedText
+                    style={[
+                      styles.messageText,
+                      message.sender === "user"
+                        ? styles.userText
+                        : styles.aiText,
+                      message.isLoading && styles.loadingText,
+                    ]}
+                  >
+                    {(() => {
+                      if (message.sender === "user" || message.isLoading) {
+                        return message.text;
+                      }
+
+                      // For AI responses, check both individual and session expansion
+                      const shouldExpand =
+                        isResponseExpanded(message.id) ||
+                        (message.sessionId &&
+                          isSessionExpanded(message.sessionId));
+
+                      return shouldExpand
+                        ? message.text
+                        : getPreviewText(message.text, 100);
+                    })()}
                   </ThemedText>
-                  {voiceSettings.enabled &&
-                    message.sender === "openai" &&
-                    !message.isLoading && (
-                      <View style={styles.voiceIndicator}>
-                        <IconSymbol
-                          name={
-                            isProcessingAudio
-                              ? "speaker.wave.3.fill"
-                              : "speaker.2.fill"
+
+                  {/* Selection buttons for AI responses (only shown when NOT in voice mode) */}
+                  {!voiceSettings.enabled &&
+                    message.sender !== "user" &&
+                    !message.isLoading &&
+                    message.sessionId &&
+                    hasMultipleResponses && (
+                      <View style={styles.selectionContainer}>
+                        <TouchableOpacity
+                          style={[
+                            styles.selectionButton,
+                            selectedResponses[message.sessionId] ===
+                              message.sender && styles.selectedButton,
+                          ]}
+                          onPress={() =>
+                            handleResponseSelection(
+                              message.sessionId!,
+                              message.sender as string
+                            )
                           }
-                          size={12}
-                          color="rgba(192, 230, 255, 0.6)"
-                        />
+                        >
+                          <IconSymbol
+                            name="hand.thumbsup.fill"
+                            size={14}
+                            color={
+                              selectedResponses[message.sessionId] ===
+                              message.sender
+                                ? "white"
+                                : "rgba(192, 230, 255, 0.6)"
+                            }
+                          />
+                          <ThemedText
+                            style={[
+                              styles.selectionText,
+                              selectedResponses[message.sessionId] ===
+                                message.sender && styles.selectedText,
+                            ]}
+                          >
+                            Better
+                          </ThemedText>
+                        </TouchableOpacity>
                       </View>
                     )}
                 </View>
-              )}
 
-              <View
-                style={[
-                  styles.messageBubble,
-                  message.sender === "user"
-                    ? styles.userBubble
-                    : styles.aiBubble,
-                  message.isLoading && styles.loadingBubble,
-                ]}
-              >
-                <ThemedText
-                  style={[
-                    styles.messageText,
-                    message.sender === "user" ? styles.userText : styles.aiText,
-                    message.isLoading && styles.loadingText,
-                  ]}
-                >
-                  {message.text}
-                </ThemedText>
-
-                {/* Selection buttons for AI responses (only shown when NOT in voice mode) */}
+                {/* Show comparison instructions only once per session group */}
                 {!voiceSettings.enabled &&
-                  message.sender !== "user" &&
-                  !message.isLoading &&
-                  message.sessionId &&
-                  // Only show selection buttons when there are multiple AI responses in this session
-                  messages.filter(
-                    (m) =>
-                      m.sessionId === message.sessionId &&
-                      m.sender !== "user" &&
-                      !m.isLoading
-                  ).length > 1 && (
-                    <View style={styles.selectionContainer}>
-                      <TouchableOpacity
-                        style={[
-                          styles.selectionButton,
-                          selectedResponses[message.sessionId] ===
-                            message.sender && styles.selectedButton,
-                        ]}
-                        onPress={() =>
-                          handleResponseSelection(
-                            message.sessionId!,
-                            message.sender as "openai" | "gemini"
-                          )
-                        }
-                      >
-                        <IconSymbol
-                          name="hand.thumbsup.fill"
-                          size={14}
-                          color={
-                            selectedResponses[message.sessionId] ===
-                            message.sender
-                              ? "white"
-                              : "rgba(192, 230, 255, 0.6)"
-                          }
-                        />
-                        <ThemedText
-                          style={[
-                            styles.selectionText,
-                            selectedResponses[message.sessionId] ===
-                              message.sender && styles.selectedText,
-                          ]}
-                        >
-                          Better
+                  isAIMessage &&
+                  isLastInGroup &&
+                  hasMultipleResponses && (
+                    <View style={styles.comparisonHint}>
+                      {selectedResponses[message.sessionId!] ? (
+                        <ThemedText style={styles.comparisonHintText}>
+                          ✅ Selected:{" "}
+                          {getSenderName(
+                            selectedResponses[message.sessionId!] as any
+                          )}
                         </ThemedText>
-                      </TouchableOpacity>
+                      ) : (
+                        <ThemedText style={styles.comparisonHintText}>
+                          👆 Compare all responses above and select the best one
+                        </ThemedText>
+                      )}
                     </View>
                   )}
               </View>
-            </View>
-          ))}
+            );
+          })}
         </ScrollView>
 
         {/* Suggested Prompts - Only show when chat is empty (only welcome message) */}
         {messages.length <= 1 && (
           <View style={styles.suggestedPromptsContainer}>
-            <ThemedText style={styles.suggestedPromptsTitle}>
-              Try asking about:
-            </ThemedText>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -604,6 +1099,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "rgba(192, 230, 255, 0.7)",
   },
+  voiceToggleContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   voiceToggle: {
     width: 44,
     height: 44,
@@ -622,6 +1121,21 @@ const styles = StyleSheet.create({
   voiceToggleDisabled: {
     opacity: 0.5,
   },
+  chainToggle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(77, 162, 255, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 12,
+  },
+  chainToggleActive: {
+    backgroundColor: SuiColors.sea,
+    borderColor: SuiColors.sea,
+  },
   messagesContainer: {
     flex: 1,
   },
@@ -637,6 +1151,10 @@ const styles = StyleSheet.create({
   },
   aiMessage: {
     alignItems: "flex-start",
+  },
+  groupedMessage: {
+    marginTop: 8,
+    marginBottom: 8,
   },
   aiHeader: {
     flexDirection: "row",
@@ -673,6 +1191,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(77, 162, 255, 0.2)",
     borderBottomLeftRadius: 4,
   },
+  groupedBubble: {
+    paddingVertical: 8,
+    marginTop: 4,
+  },
   loadingBubble: {
     opacity: 0.7,
   },
@@ -691,7 +1213,7 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   inputContainer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 8,
     paddingVertical: 20,
     borderTopWidth: 1,
     borderTopColor: "rgba(77, 162, 255, 0.15)",
@@ -703,10 +1225,8 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     backgroundColor: "rgba(77, 162, 255, 0.08)",
     borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "rgba(77, 162, 255, 0.25)",
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     shadowColor: SuiColors.sea,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -768,9 +1288,6 @@ const styles = StyleSheet.create({
   },
   suggestedPromptsContainer: {
     padding: 8,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(77, 162, 255, 0.1)",
-    backgroundColor: "rgba(1, 24, 41, 0.8)",
   },
   suggestedPromptsTitle: {
     fontSize: 16,
@@ -806,5 +1323,138 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     color: SuiColors.aqua,
     textAlign: "center",
+  },
+  chainSettingsContainer: {
+    padding: 16,
+    backgroundColor: "rgba(1, 24, 41, 0.8)",
+  },
+  chainSettingsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  chainSettingsTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+  },
+  chainSetting: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  chainSettingLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+  },
+  chainSettingDescription: {
+    fontSize: 12,
+    color: "rgba(192, 230, 255, 0.8)",
+  },
+  chainFlowContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  chainFlowIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  chainStep: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 8,
+  },
+  chainStepBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  chainStepText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "white",
+  },
+  chainArrow: {
+    marginRight: 4,
+  },
+  expandButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  comparisonHint: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: "rgba(1, 24, 41, 0.8)",
+    borderRadius: 8,
+  },
+  comparisonHintText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(192, 230, 255, 0.8)",
+  },
+  sessionHeader: {
+    padding: 8,
+    backgroundColor: "rgba(1, 24, 41, 0.8)",
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  sessionHeaderContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sessionHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  sessionHeaderText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginLeft: 8,
+    flex: 1,
+  },
+  sessionModeIndicator: {
+    padding: 4,
+    backgroundColor: SuiColors.sea,
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  sessionModeText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "white",
+  },
+  compactHeader: {
+    marginTop: 8,
+  },
+  sessionToggleButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 4,
+    marginLeft: 8,
+  },
+  sessionToggleText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginLeft: 4,
+  },
+  aiLogo: {
+    width: 20,
+    height: 20,
+    marginRight: 8,
+  },
+  chainStepLogo: {
+    width: 20,
+    height: 20,
+    marginRight: 8,
   },
 });

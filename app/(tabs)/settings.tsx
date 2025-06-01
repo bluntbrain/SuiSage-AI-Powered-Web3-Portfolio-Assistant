@@ -35,6 +35,10 @@ export default function SettingsScreen() {
     withSelections: 0,
     openaiWins: 0,
     geminiWins: 0,
+    parallelSessions: 0,
+    chainSessions: 0,
+    modelStats: [] as any[],
+    chainStats: [] as any[],
   });
   const [showVoiceDropdown, setShowVoiceDropdown] = useState(false);
 
@@ -43,8 +47,19 @@ export default function SettingsScreen() {
   }, []);
 
   const loadTrainingStats = async () => {
-    const stats = await trainingDataService.getStats();
-    setTrainingStats(stats);
+    const extStats = await trainingDataService.getExtensibleStats();
+    const legacyStats = await trainingDataService.getStats(); // For backward compatibility
+
+    setTrainingStats({
+      total: extStats.totalSessions,
+      withSelections: extStats.withSelections,
+      openaiWins: legacyStats.openaiWins,
+      geminiWins: legacyStats.geminiWins,
+      parallelSessions: extStats.parallelSessions,
+      chainSessions: extStats.chainSessions,
+      modelStats: extStats.modelStats,
+      chainStats: extStats.chainStats,
+    });
   };
 
   const handleVoiceToggle = () => {
@@ -454,6 +469,8 @@ export default function SettingsScreen() {
           {/* Stats Card */}
           <View style={styles.statsCard}>
             <ThemedText style={styles.statsTitle}>Collection Stats</ThemedText>
+
+            {/* Overall Stats */}
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
                 <ThemedText style={styles.statNumber}>
@@ -468,6 +485,24 @@ export default function SettingsScreen() {
                 <ThemedText style={styles.statLabel}>With Feedback</ThemedText>
               </View>
             </View>
+
+            {/* Mode-based Stats */}
+            <View style={styles.statsRow}>
+              <View style={styles.statItem}>
+                <ThemedText style={styles.statNumber}>
+                  {trainingStats.parallelSessions}
+                </ThemedText>
+                <ThemedText style={styles.statLabel}>Parallel</ThemedText>
+              </View>
+              <View style={styles.statItem}>
+                <ThemedText style={styles.statNumber}>
+                  {trainingStats.chainSessions}
+                </ThemedText>
+                <ThemedText style={styles.statLabel}>Chain</ThemedText>
+              </View>
+            </View>
+
+            {/* Legacy Model Stats */}
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
                 <ThemedText style={styles.statNumber}>
@@ -482,6 +517,27 @@ export default function SettingsScreen() {
                 <ThemedText style={styles.statLabel}>Gemini Wins</ThemedText>
               </View>
             </View>
+
+            {/* Chain Performance Stats */}
+            {trainingStats.chainStats.length > 0 && (
+              <View style={styles.chainStatsContainer}>
+                <ThemedText style={styles.chainStatsTitle}>
+                  Chain Performance
+                </ThemedText>
+                {trainingStats.chainStats.map(
+                  (chainStat: any, index: number) => (
+                    <View key={index} style={styles.chainStatRow}>
+                      <ThemedText style={styles.chainStatName}>
+                        {chainStat.chainConfig.name}
+                      </ThemedText>
+                      <ThemedText style={styles.chainStatValue}>
+                        {chainStat.wins}/{chainStat.totalSessions}
+                      </ThemedText>
+                    </View>
+                  )
+                )}
+              </View>
+            )}
           </View>
 
           {/* Action Buttons */}
@@ -849,6 +905,29 @@ const styles = StyleSheet.create({
   },
   dashboardButtonSubtitle: {
     fontSize: 13,
+    color: "rgba(192, 230, 255, 0.7)",
+  },
+  chainStatsContainer: {
+    marginTop: 12,
+  },
+  chainStatsTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginBottom: 8,
+  },
+  chainStatRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  chainStatName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+  },
+  chainStatValue: {
+    fontSize: 14,
     color: "rgba(192, 230, 255, 0.7)",
   },
 });

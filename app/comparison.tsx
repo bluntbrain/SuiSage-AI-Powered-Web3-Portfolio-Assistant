@@ -5,6 +5,7 @@ import {
   ScrollView,
   StatusBar,
   TouchableOpacity,
+  Image,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -15,40 +16,71 @@ import { SuiColors } from "@/constants/Colors";
 import {
   trainingDataService,
   TrainingDataEntry,
+  AI_MODELS,
+  CHAIN_CONFIGS,
 } from "@/services/trainingDataService";
 
-interface PerformanceMetrics {
-  totalResponses: number;
-  openaiWins: number;
-  geminiWins: number;
-  openaiWinRate: number;
-  geminiWinRate: number;
-  recentTrend: "openai" | "gemini" | "tied";
-  averageResponseTime?: number;
+interface ExtendedPerformanceMetrics {
+  totalSessions: number;
+  withSelections: number;
+
+  // Individual model stats
+  modelStats: {
+    modelId: string;
+    name: string;
+    totalSessions: number;
+    wins: number;
+    winRate: number;
+  }[];
+
+  // Chain combination stats
+  chainStats: {
+    chainId: string;
+    name: string;
+    models: string[];
+    totalSessions: number;
+    wins: number;
+    winRate: number;
+  }[];
+
+  // Mode breakdown
+  parallelSessions: number;
+  chainSessions: number;
+  universalSessions: number;
+
+  // Recent trends
+  recentTrend: {
+    type: "model" | "chain" | "tied";
+    id: string;
+    name: string;
+  };
 }
 
 interface CategoryAnalysis {
-  security: { openai: number; gemini: number };
-  technical: { openai: number; gemini: number };
-  general: { openai: number; gemini: number };
+  security: { [optionId: string]: number };
+  technical: { [optionId: string]: number };
+  general: { [optionId: string]: number };
 }
 
 export default function ComparisonScreen() {
   const insets = useSafeAreaInsets();
   const [trainingData, setTrainingData] = useState<TrainingDataEntry[]>([]);
-  const [metrics, setMetrics] = useState<PerformanceMetrics>({
-    totalResponses: 0,
-    openaiWins: 0,
-    geminiWins: 0,
-    openaiWinRate: 0,
-    geminiWinRate: 0,
-    recentTrend: "tied",
+  const [metrics, setMetrics] = useState<ExtendedPerformanceMetrics>({
+    totalSessions: 0,
+    withSelections: 0,
+    modelStats: [],
+    chainStats: [],
+    parallelSessions: 0,
+    chainSessions: 0,
+    universalSessions: 0,
+    recentTrend: { type: "tied", id: "", name: "No trend available" },
   });
   const [categoryAnalysis, setCategoryAnalysis] = useState<CategoryAnalysis>({
-    security: { openai: 0, gemini: 0 },
-    technical: { openai: 0, gemini: 0 },
-    general: { openai: 0, gemini: 0 },
+    security: {},
+    technical: {},
+    general: {},
   });
+  const [totalSelections, setTotalSelections] = useState<number>(0);
 
   useEffect(() => {
     loadAnalyticsData();
@@ -56,47 +88,111 @@ export default function ComparisonScreen() {
 
   const loadAnalyticsData = async () => {
     try {
+      const extStats = await trainingDataService.getExtensibleStats();
       const data = await trainingDataService.getAllTrainingData();
-      const validData = data.filter((entry) => entry.selectedBetter !== null);
+      const validData = data.filter((entry) => entry.selectedOption !== null);
 
       setTrainingData(validData);
 
-      // Calculate performance metrics
-      const openaiWins = validData.filter(
-        (entry) => entry.selectedBetter === "openai"
-      ).length;
-      const geminiWins = validData.filter(
-        (entry) => entry.selectedBetter === "gemini"
-      ).length;
-      const total = validData.length;
+      // Calculate total selections for win rate calculation
+      const totalSelections = validData.length;
+      setTotalSelections(totalSelections);
 
-      // Recent trend (last 10 selections)
+      // Transform stats into extended metrics
+      const modelStats = extStats.modelStats.map((stat) => ({
+        modelId: stat.modelId,
+        name: AI_MODELS[stat.modelId]?.name || stat.modelId,
+        totalSessions: stat.totalSessions,
+        wins: stat.wins,
+        winRate: totalSelections > 0 ? (stat.wins / totalSelections) * 100 : 0,
+      }));
+
+      const chainStats = extStats.chainStats.map((stat, index) => ({
+        chainId: `chain_${index}`,
+        name: stat.chainConfig.name,
+        models: stat.chainConfig.models,
+        totalSessions: stat.totalSessions,
+        wins: stat.wins,
+        winRate: totalSelections > 0 ? (stat.wins / totalSelections) * 100 : 0,
+      }));
+
+      // Calculate recent trend (last 10 selections)
       const recent = validData.slice(0, 10);
-      const recentOpenaiWins = recent.filter(
-        (entry) => entry.selectedBetter === "openai"
-      ).length;
-      const recentGeminiWins = recent.filter(
-        (entry) => entry.selectedBetter === "gemini"
-      ).length;
+      const recentSelections: { [optionId: string]: number } = {};
 
-      let recentTrend: "openai" | "gemini" | "tied" = "tied";
-      if (recentOpenaiWins > recentGeminiWins) recentTrend = "openai";
-      else if (recentGeminiWins > recentOpenaiWins) recentTrend = "gemini";
+      recent.forEach((entry) => {
+        if (entry.selectedOption) {
+          recentSelections[entry.selectedOption] =
+            (recentSelections[entry.selectedOption] || 0) + 1;
+        }
+      });
+
+      let recentTrend: {
+        type: "model" | "chain" | "tied";
+        id: string;
+        name: string;
+      } = { type: "tied", id: "", name: "No clear trend" };
+      let maxCount = 0;
+
+      Object.entries(recentSelections).forEach(([optionId, count]) => {
+        if (count > maxCount) {
+          maxCount = count;
+
+          // Determine if it's a model or chain
+          if (optionId.startsWith("chain_")) {
+            const chainIndex = parseInt(optionId.replace("chain_", ""));
+            const chainConfig = CHAIN_CONFIGS[chainIndex];
+            recentTrend = {
+              type: "chain",
+              id: optionId,
+              name: chainConfig?.name || `Chain ${chainIndex + 1}`,
+            };
+          } else {
+            const model = AI_MODELS[optionId];
+            recentTrend = {
+              type: "model",
+              id: optionId,
+              name: model?.name || optionId,
+            };
+          }
+        }
+      });
 
       setMetrics({
-        totalResponses: total,
-        openaiWins,
-        geminiWins,
-        openaiWinRate: total > 0 ? (openaiWins / total) * 100 : 0,
-        geminiWinRate: total > 0 ? (geminiWins / total) * 100 : 0,
+        totalSessions: extStats.totalSessions,
+        withSelections: extStats.withSelections,
+        modelStats,
+        chainStats,
+        parallelSessions: extStats.parallelSessions,
+        chainSessions: extStats.chainSessions,
+        universalSessions: extStats.universalSessions,
         recentTrend,
       });
 
-      // Analyze by category (simple keyword-based categorization)
-      const categories = {
-        security: { openai: 0, gemini: 0 },
-        technical: { openai: 0, gemini: 0 },
-        general: { openai: 0, gemini: 0 },
+      console.log("[Comparison] Progress bar data:");
+      console.log("  Total selections:", totalSelections);
+      console.log(
+        "  Model stats:",
+        modelStats.map((s) => ({
+          name: s.name,
+          wins: s.wins,
+          winRate: s.winRate,
+        }))
+      );
+      console.log(
+        "  Chain stats:",
+        chainStats.map((s) => ({
+          name: s.name,
+          wins: s.wins,
+          winRate: s.winRate,
+        }))
+      );
+
+      // Analyze by category with support for both models and chains
+      const categories: CategoryAnalysis = {
+        security: {},
+        technical: {},
+        general: {},
       };
 
       validData.forEach((entry) => {
@@ -119,8 +215,9 @@ export default function ComparisonScreen() {
           category = "technical";
         }
 
-        if (entry.selectedBetter) {
-          categories[category][entry.selectedBetter]++;
+        if (entry.selectedOption) {
+          categories[category][entry.selectedOption] =
+            (categories[category][entry.selectedOption] || 0) + 1;
         }
       });
 
@@ -133,11 +230,22 @@ export default function ComparisonScreen() {
   const renderProgressBar = (
     percentage: number,
     color: string,
-    label: string
+    label: string,
+    subtitle?: string,
+    modelId?: string
   ) => (
     <View style={styles.progressContainer}>
       <View style={styles.progressHeader}>
-        <ThemedText style={styles.progressLabel}>{label}</ThemedText>
+        <View style={styles.progressLabelContainer}>
+          {modelId ? (
+            renderModelHeader(modelId, label)
+          ) : (
+            <ThemedText style={styles.progressLabel}>{label}</ThemedText>
+          )}
+          {subtitle && (
+            <ThemedText style={styles.progressSubtitle}>{subtitle}</ThemedText>
+          )}
+        </View>
         <ThemedText style={styles.progressValue}>
           {percentage.toFixed(1)}%
         </ThemedText>
@@ -153,15 +261,123 @@ export default function ComparisonScreen() {
     </View>
   );
 
-  const getTrendIcon = (trend: string) => {
-    switch (trend) {
-      case "openai":
-        return "📈 OpenAI Leading";
-      case "gemini":
-        return "📈 Gemini Leading";
-      default:
-        return "➖ Tied Performance";
+  const getOptionName = (optionId: string): string => {
+    if (optionId.startsWith("chain_")) {
+      const chainIndex = parseInt(optionId.replace("chain_", ""));
+      return CHAIN_CONFIGS[chainIndex]?.name || `Chain ${chainIndex + 1}`;
     }
+    return AI_MODELS[optionId]?.name || optionId;
+  };
+
+  const getOptionColor = (optionId: string): string => {
+    if (optionId.startsWith("chain_")) {
+      const chainIndex = parseInt(optionId.replace("chain_", ""));
+      return chainIndex === 0 ? "#8B5CF6" : "#F59E0B";
+    }
+    switch (optionId) {
+      case "openai":
+        return "#10B981";
+      case "gemini":
+        return "#3B82F6";
+      default:
+        return SuiColors.aqua;
+    }
+  };
+
+  const getAILogo = (modelId: string) => {
+    switch (modelId) {
+      case "openai":
+        return require("@/assets/images/chatgpt.png");
+      case "gemini":
+        return require("@/assets/images/gemini.png");
+      default:
+        return null;
+    }
+  };
+
+  const renderModelHeader = (modelId: string, name: string) => {
+    const logo = getAILogo(modelId);
+
+    return (
+      <View style={styles.modelHeaderContainer}>
+        {logo ? (
+          <Image source={logo} style={styles.modelLogo} resizeMode="contain" />
+        ) : (
+          <View
+            style={[
+              styles.modelIndicator,
+              { backgroundColor: getOptionColor(modelId) },
+            ]}
+          />
+        )}
+        <ThemedText style={styles.progressLabel}>{name}</ThemedText>
+      </View>
+    );
+  };
+
+  const renderChainIndicator = (models: string[]) => (
+    <View style={styles.chainFlowIndicator}>
+      {models.map((modelId, index) => (
+        <View key={index} style={styles.chainStep}>
+          {index > 0 && (
+            <IconSymbol
+              name="arrow.right"
+              size={8}
+              color="rgba(192, 230, 255, 0.6)"
+              style={styles.chainArrow}
+            />
+          )}
+          <View style={styles.chainStepContainer}>
+            {getAILogo(modelId) ? (
+              <Image
+                source={getAILogo(modelId)!}
+                style={styles.chainStepLogo}
+                resizeMode="contain"
+              />
+            ) : (
+              <View
+                style={[
+                  styles.chainStepBadge,
+                  {
+                    backgroundColor:
+                      modelId === "openai" ? "#10B981" : "#3B82F6",
+                  },
+                ]}
+              >
+                <ThemedText style={styles.chainStepText}>
+                  {modelId === "openai" ? "GPT" : "GEM"}
+                </ThemedText>
+              </View>
+            )}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+
+  const getTrendIcon = (trend: ExtendedPerformanceMetrics["recentTrend"]) => {
+    if (trend.type === "tied") return "➖";
+    return trend.type === "chain" ? "🔗" : "🤖";
+  };
+
+  // Get the leading option overall
+  const getLeadingOption = () => {
+    const allOptions = [
+      ...metrics.modelStats.map((s) => ({ ...s, type: "model" as const })),
+      ...metrics.chainStats.map((s) => ({ ...s, type: "chain" as const })),
+    ];
+
+    return allOptions.reduce(
+      (leader, current) => (current.wins > leader.wins ? current : leader),
+      {
+        wins: 0,
+        name: "No data",
+        type: "model" as const,
+        modelId: "",
+        totalSessions: 0,
+        winRate: 0,
+      }
+    );
   };
 
   return (
@@ -213,41 +429,97 @@ export default function ComparisonScreen() {
           </View>
 
           <ThemedText style={styles.headerTitle}>
-            AI Model Comparison
+            AI Model & Chain Comparison
           </ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            Performance insights from {metrics.totalResponses} user selections
+            Performance insights from {metrics.withSelections} user selections (
+            {metrics.totalSessions} total sessions)
           </ThemedText>
         </View>
 
-        {/* Overall Performance */}
+        {/* Mode Overview */}
         <View style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>
-            Overall Performance
-          </ThemedText>
-
-          <View style={styles.metricsCard}>
-            {renderProgressBar(
-              metrics.openaiWinRate,
-              "#10B981",
-              "OpenAI GPT-4o-mini"
-            )}
-            {renderProgressBar(
-              metrics.geminiWinRate,
-              "#3B82F6",
-              "Google Gemini 2.0 Flash"
-            )}
-
-            <View style={styles.trendContainer}>
-              <ThemedText style={styles.trendLabel}>
-                Recent Trend (Last 10):
+          <ThemedText style={styles.sectionTitle}>Usage Overview</ThemedText>
+          <View style={styles.modeCard}>
+            <View style={styles.modeItem}>
+              <ThemedText style={styles.modeLabel}>Parallel Mode</ThemedText>
+              <ThemedText style={styles.modeValue}>
+                {metrics.parallelSessions} sessions
               </ThemedText>
-              <ThemedText style={styles.trendValue}>
-                {getTrendIcon(metrics.recentTrend)}
+            </View>
+            <View style={styles.modeItem}>
+              <ThemedText style={styles.modeLabel}>Chain Mode</ThemedText>
+              <ThemedText style={styles.modeValue}>
+                {metrics.chainSessions} sessions
+              </ThemedText>
+            </View>
+            <View style={styles.modeItem}>
+              <ThemedText style={styles.modeLabel}>Universal Mode</ThemedText>
+              <ThemedText style={styles.modeValue}>
+                {metrics.universalSessions} sessions
               </ThemedText>
             </View>
           </View>
         </View>
+
+        {/* Individual Model Performance */}
+        <View style={styles.section}>
+          <ThemedText style={styles.sectionTitle}>Individual Models</ThemedText>
+          <View style={styles.metricsCard}>
+            {metrics.modelStats.map((stat) =>
+              renderProgressBar(
+                stat.winRate,
+                getOptionColor(stat.modelId),
+                stat.name,
+                `${stat.wins} selections out of ${totalSelections} comparisons`,
+                stat.modelId
+              )
+            )}
+          </View>
+        </View>
+
+        {/* Chain Combination Performance */}
+        {metrics.chainStats.length > 0 && (
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>
+              Chain Combinations
+            </ThemedText>
+            <View style={styles.metricsCard}>
+              {metrics.chainStats.map((stat) => (
+                <View key={stat.chainId} style={styles.progressContainer}>
+                  <View style={styles.progressHeader}>
+                    <View style={styles.progressLabelContainer}>
+                      <View style={styles.chainLabelRow}>
+                        <ThemedText style={styles.progressLabel}>
+                          {stat.name}
+                        </ThemedText>
+                        {renderChainIndicator(stat.models)}
+                      </View>
+                      <ThemedText style={styles.progressSubtitle}>
+                        {stat.wins} selections out of {totalSelections}{" "}
+                        comparisons
+                      </ThemedText>
+                    </View>
+                    <ThemedText style={styles.progressValue}>
+                      {stat.winRate.toFixed(1)}%
+                    </ThemedText>
+                  </View>
+                  <View style={styles.progressBarBackground}>
+                    <View
+                      style={[
+                        styles.progressBarFill,
+                        {
+                          width: `${stat.winRate}%`,
+                          backgroundColor: getOptionColor(stat.chainId),
+                        },
+                      ]}
+                    />
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Category Breakdown */}
         <View style={styles.section}>
@@ -256,11 +528,12 @@ export default function ComparisonScreen() {
           </ThemedText>
 
           {Object.entries(categoryAnalysis).map(([category, data]) => {
-            const total = data.openai + data.gemini;
+            const dataEntries = Object.entries(data) as [string, number][];
+            const total = dataEntries.reduce(
+              (sum, [, count]) => sum + count,
+              0
+            );
             if (total === 0) return null;
-
-            const openaiPercentage = (data.openai / total) * 100;
-            const geminiPercentage = (data.gemini / total) * 100;
 
             return (
               <View key={category} style={styles.categoryCard}>
@@ -273,40 +546,46 @@ export default function ComparisonScreen() {
                 </ThemedText>
 
                 <View style={styles.categoryStats}>
-                  <View style={styles.categoryStat}>
-                    <View
-                      style={[
-                        styles.categoryIndicator,
-                        { backgroundColor: "#10B981" },
-                      ]}
-                    />
-                    <ThemedText style={styles.categoryStatText}>
-                      OpenAI: {data.openai} ({openaiPercentage.toFixed(0)}%)
-                    </ThemedText>
-                  </View>
-                  <View style={styles.categoryStat}>
-                    <View
-                      style={[
-                        styles.categoryIndicator,
-                        { backgroundColor: "#3B82F6" },
-                      ]}
-                    />
-                    <ThemedText style={styles.categoryStatText}>
-                      Gemini: {data.gemini} ({geminiPercentage.toFixed(0)}%)
-                    </ThemedText>
-                  </View>
+                  {dataEntries
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([optionId, count]) => {
+                      const percentage = (count / total) * 100;
+                      return (
+                        <View key={optionId} style={styles.categoryStat}>
+                          <View
+                            style={[
+                              styles.categoryIndicator,
+                              { backgroundColor: getOptionColor(optionId) },
+                            ]}
+                          />
+                          <ThemedText style={styles.categoryStatText}>
+                            {getOptionName(optionId)}: {count} (
+                            {percentage.toFixed(0)}%)
+                          </ThemedText>
+                          {optionId.startsWith("chain_") && (
+                            <View style={styles.categoryChainIndicator}>
+                              {renderChainIndicator(
+                                CHAIN_CONFIGS[
+                                  parseInt(optionId.replace("chain_", ""))
+                                ]?.models || []
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })}
                 </View>
               </View>
             );
           })}
         </View>
 
-        {/* Insights */}
+        {/* Key Insights */}
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Key Insights</ThemedText>
 
           <View style={styles.insightsCard}>
-            {metrics.totalResponses === 0 ? (
+            {metrics.withSelections === 0 ? (
               <ThemedText style={styles.insightText}>
                 No comparison data available yet. Start chatting with AI
                 assistants and select better responses to see insights.
@@ -315,55 +594,49 @@ export default function ComparisonScreen() {
               <>
                 <View style={styles.insight}>
                   <ThemedText style={styles.insightLabel}>
-                    🏆 Leading Model:
+                    🏆 Overall Leader:
                   </ThemedText>
                   <ThemedText style={styles.insightValue}>
-                    {metrics.openaiWins > metrics.geminiWins
-                      ? "OpenAI GPT-4o-mini"
-                      : metrics.geminiWins > metrics.openaiWins
-                      ? "Google Gemini 2.0 Flash"
-                      : "Tied Performance"}
+                    {getLeadingOption().name} ({getLeadingOption().type})
                   </ThemedText>
                 </View>
 
                 <View style={styles.insight}>
                   <ThemedText style={styles.insightLabel}>
-                    📊 Win Margin:
+                    📊 Selection Rate:
                   </ThemedText>
                   <ThemedText style={styles.insightValue}>
-                    {Math.abs(metrics.openaiWins - metrics.geminiWins)}{" "}
-                    selections
+                    {(
+                      (metrics.withSelections / metrics.totalSessions) *
+                      100
+                    ).toFixed(1)}
+                    % of sessions have user selections
                   </ThemedText>
                 </View>
 
                 <View style={styles.insight}>
                   <ThemedText style={styles.insightLabel}>
-                    💡 Best Category:
+                    🔄 Recent Trend:
                   </ThemedText>
                   <ThemedText style={styles.insightValue}>
-                    {Object.entries(categoryAnalysis)
-                      .reduce((best, [category, data]) => {
-                        const total = data.openai + data.gemini;
-                        const bestTotal =
-                          categoryAnalysis[best as keyof CategoryAnalysis]
-                            .openai +
-                          categoryAnalysis[best as keyof CategoryAnalysis]
-                            .gemini;
-                        return total > bestTotal ? category : best;
-                      }, "general")
-                      .charAt(0)
-                      .toUpperCase() +
-                      Object.entries(categoryAnalysis)
-                        .reduce((best, [category, data]) => {
-                          const total = data.openai + data.gemini;
-                          const bestTotal =
-                            categoryAnalysis[best as keyof CategoryAnalysis]
-                              .openai +
-                            categoryAnalysis[best as keyof CategoryAnalysis]
-                              .gemini;
-                          return total > bestTotal ? category : best;
-                        }, "general")
-                        .slice(1)}
+                    {getTrendIcon(metrics.recentTrend)}{" "}
+                    {metrics.recentTrend.name}
+                  </ThemedText>
+                </View>
+
+                <View style={styles.insight}>
+                  <ThemedText style={styles.insightLabel}>
+                    🎯 Preferred Mode:
+                  </ThemedText>
+                  <ThemedText style={styles.insightValue}>
+                    {metrics.universalSessions > metrics.parallelSessions &&
+                    metrics.universalSessions > metrics.chainSessions
+                      ? "Universal (Complete Comparison)"
+                      : metrics.parallelSessions > metrics.chainSessions
+                      ? "Parallel (Individual Models)"
+                      : metrics.chainSessions > metrics.parallelSessions
+                      ? "Chain (Sequential Processing)"
+                      : "Balanced Usage"}
                   </ThemedText>
                 </View>
               </>
@@ -455,6 +728,29 @@ const styles = StyleSheet.create({
     color: SuiColors.aqua,
     marginBottom: 16,
   },
+  modeCard: {
+    backgroundColor: "rgba(77, 162, 255, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(77, 162, 255, 0.2)",
+    borderRadius: 12,
+    padding: 20,
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  modeItem: {
+    alignItems: "center",
+  },
+  modeLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: SuiColors.aqua,
+    marginBottom: 4,
+  },
+  modeValue: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "rgba(192, 230, 255, 0.9)",
+  },
   metricsCard: {
     backgroundColor: "rgba(77, 162, 255, 0.05)",
     borderWidth: 1,
@@ -468,13 +764,22 @@ const styles = StyleSheet.create({
   progressHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     marginBottom: 8,
+  },
+  progressLabelContainer: {
+    flex: 1,
+    marginRight: 12,
   },
   progressLabel: {
     fontSize: 14,
     fontWeight: "600",
     color: SuiColors.aqua,
+  },
+  progressSubtitle: {
+    fontSize: 12,
+    color: "rgba(192, 230, 255, 0.6)",
+    marginTop: 2,
   },
   progressValue: {
     fontSize: 14,
@@ -491,23 +796,44 @@ const styles = StyleSheet.create({
     height: "100%",
     borderRadius: 4,
   },
-  trendContainer: {
+  chainLabelRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 10,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(77, 162, 255, 0.1)",
+    marginBottom: 2,
   },
-  trendLabel: {
-    fontSize: 13,
-    color: "rgba(192, 230, 255, 0.7)",
+  chainFlowIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginLeft: 8,
   },
-  trendValue: {
-    fontSize: 13,
+  chainStep: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  chainStepContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  chainStepLogo: {
+    width: 16,
+    height: 16,
+    marginRight: 4,
+  },
+  chainStepBadge: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 4,
+  },
+  chainStepText: {
+    fontSize: 10,
     fontWeight: "600",
-    color: SuiColors.aqua,
+    color: "white",
+  },
+  chainArrow: {
+    marginRight: 4,
   },
   categoryCard: {
     backgroundColor: "rgba(77, 162, 255, 0.05)",
@@ -544,6 +870,29 @@ const styles = StyleSheet.create({
   categoryStatText: {
     fontSize: 13,
     color: "rgba(192, 230, 255, 0.8)",
+    flex: 1,
+  },
+  categoryChainIndicator: {
+    marginLeft: 8,
+  },
+  trendContainer: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(77, 162, 255, 0.1)",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  trendLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "rgba(192, 230, 255, 0.8)",
+  },
+  trendValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: SuiColors.aqua,
   },
   insightsCard: {
     backgroundColor: "rgba(77, 162, 255, 0.05)",
@@ -560,20 +909,36 @@ const styles = StyleSheet.create({
   },
   insightLabel: {
     fontSize: 14,
-    color: "rgba(192, 230, 255, 0.7)",
+    fontWeight: "600",
+    color: "rgba(192, 230, 255, 0.8)",
     flex: 1,
   },
   insightValue: {
     fontSize: 14,
     fontWeight: "600",
     color: SuiColors.aqua,
-    flex: 1,
     textAlign: "right",
+    flex: 1,
   },
   insightText: {
     fontSize: 14,
     color: "rgba(192, 230, 255, 0.7)",
     textAlign: "center",
     lineHeight: 20,
+  },
+  modelHeaderContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  modelLogo: {
+    width: 20,
+    height: 20,
+    marginRight: 8,
+  },
+  modelIndicator: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    marginRight: 8,
   },
 });
