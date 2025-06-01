@@ -1,94 +1,107 @@
-# SuiSage - AI-Powered Web3 Portfolio Assistant
+# SuiSage
 
-AI-powered React Native app for Sui blockchain portfolio analysis with glass morphism UI and voice mode.
+React Native app that chains AI models together for better Sui blockchain analysis.
+
+## What makes this different
+
+Most AI apps give you one response from one model. This app connects multiple AI models in sequence. The second AI reads the first AI's response and builds on it.
+
+Here's how it works:
+- **Chain 1**: OpenAI analyzes first, then Gemini adds to that analysis
+- **Chain 2**: Gemini goes first, then OpenAI refines it
+- **Compare mode**: See individual responses and chain results side by side
+
+## Why chain AI models
+
+When you chain models together, you get better results:
+- The second AI can catch mistakes from the first
+- Each AI has different strengths, so you get both
+- More thorough analysis than any single AI
+- Sometimes the combination finds things neither AI would alone
+
+## Three ways to use it
+
+**Parallel**: Normal AI chat with multiple models responding separately
+
+**Chain**: Sequential processing where each AI builds on the previous response
+
+**Universal**: Compare everything, individual models and chain combinations
 
 ## Features
 
-- **Dual AI Analysis**: OpenAI GPT-4o-mini + Google Gemini 2.0 Flash responses
-- **🎤 Voice Mode**: Natural text-to-speech using UnrealSpeech API with 30+ premium voices
-- **AI Comparison Dashboard**: Analytics on model performance and user preferences
-- Sui blockchain integration (mainnet/testnet/devnet/localnet)
-- Cross-platform (iOS, Android, Web)
-- Glass morphism UI with Sui branding
-- Real-time portfolio tracking and analytics
-- Smart recommendations (gas, staking, diversification)
-- Training data collection for AI improvement
+- Voice responses with 30+ voices
+- Track which AI approach works best for your questions
+- Switch between Sui networks (mainnet, testnet, devnet, localnet)
+- Portfolio analysis and security recommendations
+- Performance analytics to see what works
 
-## Quick Start
+## Setup
 
-### Prerequisites
-- Node.js 16+
-- Expo CLI: `npm install -g @expo/cli`
+You need Node.js 16+ and Expo CLI:
+```bash
+npm install -g @expo/cli
+```
 
-### Setup
+Clone and install:
 ```bash
 git clone https://github.com/bluntbrain/SuiSage-AI-Powered-Web3-Portfolio-Assistant.git
 cd SuiSage
 npm install
 ```
 
-### Environment Variables
-Create `.env`:
+Add your API keys in `.env`:
 ```env
-EXPO_PUBLIC_OPENAI_API_KEY=your_openai_api_key_here
-EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_api_key_here
-EXPO_PUBLIC_UNREALSPEECH_API_KEY=your_unrealspeech_api_key_here
+EXPO_PUBLIC_OPENAI_API_KEY=your_openai_key
+EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_key
+EXPO_PUBLIC_UNREALSPEECH_API_KEY=your_voice_key
 EXPO_PUBLIC_SUI_NETWORK=testnet
 ```
 
-### Run
+Run it:
 ```bash
 npm start
-# Then press 'i' for iOS, 'a' for Android, or 'w' for web
+# Press 'i' for iOS, 'a' for Android, 'w' for web
 ```
 
-## Usage
+## How to use
 
-1. **Dashboard**: Select network via dropdown, enter Sui wallet address (0x... format), tap "Analyze"
-2. **Chat**: Ask AI assistants about security, portfolio analysis, or general Web3 questions
-3. **🎤 Voice Mode**: Toggle voice button in chat for audio responses (OpenAI-only for speed)
-4. **Settings**: Configure AI providers, select voices, view training data analytics
+1. **Dashboard**: Pick a network, enter your Sui wallet address, tap analyze
+2. **Chat**: Ask questions about security or portfolio analysis
+3. **Voice mode**: Toggle voice for audio responses (OpenAI only for speed)
+4. **Settings**: Change AI providers, pick voices, see analytics
 
-## Configuration
+## API keys you need
 
-### API Keys
+**OpenAI**: Get from [platform.openai.com](https://platform.openai.com/api-keys) - required for AI chat and voice
 
-#### OpenAI API Key
-Get from [OpenAI Platform](https://platform.openai.com/api-keys). Required for AI chat and voice mode.
+**Gemini**: Get from [aistudio.google.com](https://aistudio.google.com/app/apikey) - optional, enables chaining
 
-#### Google Gemini API Key  
-Get from [Google AI Studio](https://aistudio.google.com/app/apikey). Optional - provides dual AI comparison.
+**UnrealSpeech**: Get from [unrealspeech.com](https://unrealspeech.com) - optional, for voice responses
 
-#### UnrealSpeech API Key
-Get from [UnrealSpeech](https://unrealspeech.com). Optional - enables voice mode with premium natural voices.
+## Example of chaining in action
 
-### Voice Mode
-- **30+ Premium Voices**: American, Chinese, Spanish, French, Hindi, Italian, Portuguese
-- **Auto-play**: AI responses automatically convert to speech and play
-- **OpenAI Only**: Voice mode uses only OpenAI for faster processing
-- **Settings**: Change voice selection in Settings > Voice Mode
+You ask: "is my wallet secure?"
 
-### Networks
-- `testnet` (default) - Test network
-- `mainnet` - Production network  
-- `devnet` - Development network
-- `localnet` - Local network
+**Without chaining**: One AI gives you 3 security tips
 
-## Tech Stack
+**With chaining**: 
+1. First AI finds 3 security issues
+2. Second AI reads that response and adds 2 more issues the first AI missed
+3. You get 5 security issues total plus better recommendations
+
+## What it's built with
 
 - React Native + Expo
 - TypeScript
 - Sui TypeScript SDK
-- OpenAI GPT-4o-mini API
-- Google Gemini 2.0 Flash API
-- UnrealSpeech API (Text-to-Speech)
-- expo-av (Audio playback)
-- Glass morphism UI
+- OpenAI GPT-4o-mini
+- Google Gemini 2.0 Flash
+- UnrealSpeech for voices
 
-## Scripts
+## Commands
 
-- `npm start` - Start development server
-- `npm run lint` - Run ESLint
-- `npm run ios` - iOS simulator
+- `npm start` - development server
+- `npm run lint` - check code
+- `npm run ios` - iOS simulator  
 - `npm run android` - Android emulator
 
