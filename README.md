@@ -1,6 +1,13 @@
 # SuiSage
-
 React Native app that chains AI models together for better Sui blockchain analysis.
+
+
+
+https://github.com/user-attachments/assets/74f6a5ac-e0ea-4b2a-b5bd-c077ad42b8a1
+
+
+
+
 
 ## What makes this different
 
